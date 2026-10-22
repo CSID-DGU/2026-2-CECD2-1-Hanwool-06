@@ -1,0 +1,2 @@
+-r back/api/requirements.txt
+-r back/pipelines/requirements.txt

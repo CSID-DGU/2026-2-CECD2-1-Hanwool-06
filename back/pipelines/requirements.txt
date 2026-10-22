@@ -1,0 +1,4 @@
+-r ../ml/lightgbm/requirements.txt
+requests
+beautifulsoup4
+python-dotenv

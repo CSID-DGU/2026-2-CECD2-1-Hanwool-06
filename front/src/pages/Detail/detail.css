@@ -1,0 +1,117 @@
+/* 역 상세: 계량기 선택, 역 머리글, 위험도·일일 자료, 청구서, 차트 */
+.dt-picker { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+/* 선택 칸 폭은 고정한다: 고른 이름 길이에 따라 칸이 늘었다 줄었다 하지 않게(긴 이름은 말줄임) */
+.dt-picker .form-field { flex: 0 1 180px; min-width: 140px; }
+.dt-picker .dt-picker-meter { flex-basis: 280px; }
+
+.dt-station { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--rule); }
+.dt-station-lines { display: flex; gap: 6px; margin-bottom: 8px; }
+.dt-station h1 { font-size: 28px; }
+.dt-meter-label { margin: 4px 0 0; color: var(--sub); }
+.dt-meter-label span { margin-left: 8px; color: var(--mute); font-variant-numeric: tabular-nums; }
+.dt-station-risk { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; }
+.dt-station-risk strong { font-size: 28px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.dt-station-risk > span:last-child { color: var(--mute); font-size: 12px; }
+/* 원격검침 값이 그대로일 때 안내: 사실 한 문단 + 펼치는 확인 방법 */
+.data-notice > p { margin: 0; }
+.data-notice-more { margin-top: 6px; }
+.data-notice-more summary { width: fit-content; font-weight: 600; cursor: pointer; }
+.data-notice-more ol { margin: 6px 0 0; padding-left: 20px; }
+
+.dt-facts { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 12px 0 0; font-size: 13px; }
+.dt-facts > div { display: flex; gap: 8px; }
+.dt-facts dt { color: var(--mute); }
+.dt-facts dd { margin: 0; }
+
+.dt-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.dt-cols > :only-child { grid-column: 1 / -1; }
+.dt-card { min-width: 0; padding: 12px 20px 20px; border: 1px solid var(--rule); border-radius: var(--radius); }
+.dt-card > .form-hint { margin-top: 10px; }
+
+.dt-risk-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 14px; }
+.dt-risk-stats { display: grid; grid-template-columns: repeat(4, 1fr); margin: 0 0 14px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.dt-stat { padding: 10px 12px; border-left: 1px solid var(--rule-soft); }
+.dt-stat:first-child { padding-left: 0; border-left: 0; }
+.dt-stat dt { color: var(--mute); font-size: 12px; }
+.dt-stat dd { margin: 2px 0 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 날짜별 위험도 달력: 정상은 색 없음, 주의·경고만 바탕색 */
+.dt-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.dt-cal-head strong { font-size: 15px; }
+.dt-cal-head .secondary-button { padding: 2px 10px; font-size: 13px; }
+.dt-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dt-cal-dow { padding: 2px 0; color: var(--mute); font-size: 12px; text-align: center; }
+.dt-cal-day { height: 36px; border: 1px solid var(--rule-soft); border-radius: var(--radius); background: var(--paper); color: var(--ink); font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.dt-cal-day.is-warn { border-color: #ecd3a6; background: var(--warn-bg); color: #6b3d00; font-weight: 600; }
+.dt-cal-day.is-alert { border-color: #efc4c4; background: var(--alert-bg); color: #8f1d1d; font-weight: 600; }
+.dt-cal-day.is-unknown { border-style: dashed; color: var(--mute); }
+.dt-cal-day.is-empty { border-color: transparent; color: var(--mute); cursor: default; }
+.dt-cal-day[aria-pressed="true"] { outline: 2px solid var(--brand); outline-offset: -2px; }
+.dt-cal-day:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.dt-cal-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; color: var(--sub); font-size: 12px; }
+.dt-cal-legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 5px; border: 1px solid var(--rule); border-radius: 2px; background: var(--paper); vertical-align: -2px; }
+.dt-cal-legend .is-warn::before { border-color: #ecd3a6; background: var(--warn-bg); }
+.dt-cal-legend .is-alert::before { border-color: #efc4c4; background: var(--alert-bg); }
+.dt-cal-legend .is-unknown::before { border-style: dashed; }
+.dt-cal-legend .is-empty::before { border-color: transparent; background: var(--ground); }
+
+.dt-date { display: inline-flex; align-items: center; gap: 8px; }
+.dt-date input { height: 30px; padding: 0 8px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper); font-size: 13px; }
+.dt-daily-sub + .dt-daily-sub { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--rule-soft); }
+.dt-daily-sub-head { display: flex; align-items: baseline; gap: 6px; margin: 0 0 4px; color: var(--sub); font-size: 13px; }
+.dt-daily-sub-head span { margin-right: 6px; color: var(--ink); font-weight: 600; }
+.dt-daily-sub-head strong { color: var(--ink); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.dt-chart-wrap { width: 100%; overflow-x: auto; }
+.dt-chart { display: block; }
+.dt-chart-grid { stroke: var(--rule-soft); stroke-width: 1; }
+.dt-chart-axis { fill: var(--mute); font-size: 12px; }
+.dt-chart-value { fill: var(--ink); font-size: 11px; font-weight: 600; }
+.dt-chart-unit { fill: var(--mute); font-size: 11px; }
+
+/* 청구서: 아리수 고지서 양식을 따른다 */
+.dt-bill-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; }
+.dt-bill-toolbar .form-field { flex: 0 0 110px; }
+.dt-bill-toolbar .dt-bill-kind { flex-basis: 200px; }
+.pdf-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.dt-card > .data-notice { margin-top: 10px; }
+.dt-bill { margin-top: 12px; padding: 20px; border: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+.dt-bill-top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 20px; }
+.dt-bill-title { margin: 0 0 12px; font-size: 17px; font-weight: 700; }
+.dt-bill-meta { margin: 0; }
+.dt-bill-meta > div { display: flex; gap: 10px; margin-bottom: 4px; }
+.dt-bill-meta dt { min-width: 44px; color: var(--sub); }
+.dt-bill-meta dd { margin: 0; font-weight: 600; }
+.dt-bill-idtable, .dt-bill-grid, .dt-bill-kv { border-collapse: collapse; font-size: 13px; }
+.dt-bill-idtable { height: fit-content; }
+.dt-bill-idtable th, .dt-bill-idtable td, .dt-bill-grid th, .dt-bill-grid td, .dt-bill-kv th, .dt-bill-kv td { padding: 6px 12px; border: 1px solid var(--rule); }
+.dt-bill-idtable th, .dt-bill-kv th, .dt-bill-grid tbody th { background: var(--ground); color: var(--sub); font-weight: 400; text-align: left; }
+.dt-bill-pay { display: flex; align-items: baseline; justify-content: space-between; margin: 16px 0; padding: 12px 16px; border: 1px solid var(--rule); border-top: 2px solid var(--brand); }
+.dt-bill-pay span { font-size: 15px; font-weight: 600; }
+.dt-bill-pay strong { font-size: 24px; font-weight: 700; }
+.dt-bill-grid { width: 100%; margin-bottom: 12px; table-layout: fixed; text-align: right; }
+.dt-bill-grid thead th { border-color: #2b3b9c; background: var(--brand); color: #fff; font-weight: 600; text-align: center; }
+.dt-bill-grid tbody th { text-align: center; }
+.dt-bill-grid .dt-bill-sum th, .dt-bill-grid .dt-bill-sum td { font-weight: 700; }
+.dt-bill-period { margin: 6px 0 10px; font-size: 13px; font-weight: 600; }
+.dt-bill-cols { display: grid; grid-template-columns: 1fr 1.2fr; gap: 12px; }
+.dt-bill-cols .dt-bill-grid { margin-bottom: 0; }
+.dt-bill-kv { width: 100%; table-layout: fixed; }
+.dt-bill-kv th { width: 30%; white-space: nowrap; }
+.dt-bill-kv td { width: 20%; text-align: right; }
+.dt-bill-charts { display: flex; flex-direction: column; gap: 24px; margin-top: 24px; }
+
+@media (max-width: 860px) {
+  .dt-cols, .dt-bill-cols { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .dt-station h1 { font-size: 24px; }
+  .dt-card { padding: 10px 14px 16px; }
+  .dt-risk-stats { grid-template-columns: 1fr 1fr; }
+  .dt-stat:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .dt-stat:nth-child(n + 3) { border-top: 1px solid var(--rule-soft); }
+  .dt-bill { padding: 12px; overflow-x: auto; }
+  .dt-bill-idtable { width: 100%; }
+  .dt-bill-grid th, .dt-bill-grid td, .dt-bill-kv th, .dt-bill-kv td { padding: 6px; font-size: 12px; white-space: normal; }
+  .pdf-actions { margin-left: 0; }
+}

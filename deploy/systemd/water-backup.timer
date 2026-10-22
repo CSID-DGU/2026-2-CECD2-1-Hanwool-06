@@ -1,0 +1,9 @@
+[Unit]
+Description=Run water-backup daily at 03:30 KST
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,19 @@
+/* 업무 요약 대화상자 */
+.ag-body { max-height: 65vh; padding: 16px 20px; overflow-y: auto; }
+.ag-lead { margin: 0 0 12px; }
+.ag-list { margin: 0; padding: 0; list-style: none; }
+.ag-item { padding: 12px 0; border-top: 1px solid var(--rule-soft); }
+.ag-item:first-child { border-top-color: var(--rule); }
+.ag-item:last-child { padding-bottom: 0; }
+.ag-item-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; color: var(--sub); font-size: 13px; }
+.ag-item-main strong { color: var(--ink); }
+.ag-item-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ag-item-btns .secondary-button { min-height: 30px; padding: 4px 10px; font-size: 12px; }
+.ag-item > p { margin-top: 8px; }
+.ag-cause { margin-top: 10px; padding: 12px; background: var(--ground); font-size: 13px; }
+.ag-cause p { margin: 0 0 6px; }
+.ag-cause p:last-child { margin-bottom: 0; }
+.ag-cause ul, .ag-cause ol { margin: 0 0 8px; padding-left: 18px; color: var(--sub); }
+.ag-cause ol { color: var(--text); }
+.ag-cause .ag-cause-label { margin: 8px 0 4px; font-weight: 600; }
+.ag-cause a { color: var(--brand); text-decoration: underline; }

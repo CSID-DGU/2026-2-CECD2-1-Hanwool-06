@@ -1,0 +1,15 @@
+[Unit]
+Description=Seoul Metro water monitor (FastAPI)
+After=network.target
+
+[Service]
+User=water
+Group=water
+WorkingDirectory=/home/water/app
+EnvironmentFile=/etc/water-monitor.env
+ExecStart=/home/water/miniforge3/envs/hanul/bin/python -m uvicorn back.api.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

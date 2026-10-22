@@ -1,0 +1,6 @@
+#!/bin/bash
+# 운영 설정으로 관리 명령을 water 사용자로 실행한다. 예: water-cli back.pipelines.refresh --model
+set -e
+set -a; . /etc/water-monitor.env; set +a
+cd /home/water/app
+exec runuser -u water -- /home/water/miniforge3/envs/hanul/bin/python -m "$@"

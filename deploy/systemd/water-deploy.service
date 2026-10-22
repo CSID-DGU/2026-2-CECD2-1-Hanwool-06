@@ -1,0 +1,10 @@
+[Unit]
+Description=Deploy CI-passed commits from GitHub main
+After=network-online.target water-monitor.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/water-deploy.sh
+Nice=10
+TimeoutStartSec=50min

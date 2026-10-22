@@ -1,0 +1,49 @@
+name: CI
+
+# PR과 main push마다 파이썬 테스트, 화면 테스트, 화면 빌드를 돌린다. 비밀값을 쓰지 않고 서버에 접속하지 않는다.
+# 운영 서버는 main 커밋 중 이 워크플로가 통과한 것만 받아 간다(deploy/water-deploy.sh). 그래서 main push에는 경로 필터를 두지 않는다.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TZ: Asia/Seoul
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements*.txt
+            back/**/requirements.txt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements-dev.txt
+          npm ci --no-audit --no-fund
+      - name: Python tests
+        run: python -m unittest discover -s tests
+      - name: Front tests
+        run: npm test
+      - name: Front build
+        run: npm run build

@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily copy of water monitor DB and data to Object Storage (back/storage)
+After=network-online.target water-backup.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=water
+Group=water
+EnvironmentFile=/etc/water-monitor.env
+EnvironmentFile=/etc/water-backup.env
+ExecStart=/usr/local/sbin/water-storage.sh
+Nice=10
+TimeoutStartSec=3h

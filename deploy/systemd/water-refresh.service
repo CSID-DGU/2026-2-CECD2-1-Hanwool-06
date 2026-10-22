@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily ridership collection and model refresh
+After=network-online.target water-monitor.service
+Wants=network-online.target
+# 채팅은 버킷 사본을 읽으므로, 모델 갱신이 끝나면 14:00을 기다리지 않고 바로 버킷에 올린다
+OnSuccess=water-storage.service
+
+[Service]
+Type=oneshot
+User=water
+Group=water
+WorkingDirectory=/home/water/app
+EnvironmentFile=/etc/water-monitor.env
+ExecStart=/usr/local/sbin/water-refresh.sh
+Nice=10

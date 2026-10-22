@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily backup of water monitor DB and data to Object Storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=water
+Group=water
+EnvironmentFile=/etc/water-monitor.env
+EnvironmentFile=/etc/water-backup.env
+ExecStart=/usr/local/sbin/water-backup.sh
+Nice=10

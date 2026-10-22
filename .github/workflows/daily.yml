@@ -1,0 +1,71 @@
+name: Private data refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: 'First KST observation date (YYYY-MM-DD; blank = recent 5 days)'
+        required: false
+      end:
+        description: 'Last KST observation date (YYYY-MM-DD; blank = yesterday)'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jongsul-private-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    # Provision a trusted runner with persistent private storage and the registered-contract DB.
+    runs-on: self-hosted
+    env:
+      TZ: Asia/Seoul
+      MPLBACKEND: Agg
+      APP_DATA_DIR: ${{ vars.APP_DATA_DIR }}
+      APP_DB_PATH: ${{ vars.APP_DB_PATH }}
+      START_DATE: ${{ inputs.start }}
+      END_DATE: ${{ inputs.end }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # Validate the storage path before any cleanup of untracked local data.
+          clean: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate private persistent storage
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          value = os.environ.get('APP_DATA_DIR')
+          if not value:
+              raise SystemExit('Set APP_DATA_DIR to persistent storage outside this checkout')
+          root = Path(value).resolve()
+          checkout = Path.cwd().resolve()
+          if root == checkout or checkout in root.parents:
+              raise SystemExit('APP_DATA_DIR must be outside the checkout')
+          db_value = os.environ.get('APP_DB_PATH')
+          db = Path(db_value) if db_value else root / 'app.sqlite3'
+          if not db.is_file():
+              raise SystemExit('Initialize the application and register contracts before collection')
+          root.mkdir(parents=True, exist_ok=True)
+          PY
+      - name: Install dependencies
+        run: |
+          python -m pip install -r back/api/requirements.txt -r back/pipelines/requirements.txt
+      - name: Refresh registered contracts and private model snapshot
+        shell: bash
+        env:
+          ARISU_USER_ID: ${{ secrets.ARISU_USER_ID }}
+          ARISU_USER_PWD: ${{ secrets.ARISU_USER_PWD }}
+          SEOUL_PSGR_KEY: ${{ secrets.SEOUL_PSGR_KEY }}
+        run: |
+          args=(--all)
+          if [[ -n "$START_DATE" ]]; then args+=(--start "$START_DATE"); fi
+          if [[ -n "$END_DATE" ]]; then args+=(--end "$END_DATE"); fi
+          python -m back.pipelines.refresh "${args[@]}"

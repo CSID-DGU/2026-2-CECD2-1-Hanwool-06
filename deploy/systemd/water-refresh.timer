@@ -1,0 +1,9 @@
+[Unit]
+Description=Run water-refresh daily at 08:05 KST
+
+[Timer]
+OnCalendar=*-*-* 08:05:00 Asia/Seoul
+Persistent=true
+
+[Install]
+WantedBy=timers.target
