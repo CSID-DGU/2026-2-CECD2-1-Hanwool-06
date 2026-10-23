@@ -4,6 +4,7 @@ import json
 import math
 import tempfile
 import unittest
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -82,6 +83,96 @@ class CatalogCheck(unittest.TestCase):
         # a meter the model left out for short history is marked so the screen can say why it has no risk yet
         everything = catalog.payload(None)["stations"]
         self.assertEqual((everything["000000001"]["history_short"], everything["000000002"]["history_short"]), (False, True))
+
+    def test_arisu_status_is_scoped_and_invalidates_data_version(self):
+        folder = config.DATA_DIR / 'arisu'
+        folder.mkdir(parents=True)
+        before = catalog.data_version(['가사업소'])
+        smart = {'customer_number': '000000001', 'leak_status': '안전', 'meter_status': None,
+                 'realtime_usage': 0, 'updated_at': '2026-10-24 00:00'}
+        (folder / '000000001.json').write_text(json.dumps(smart))
+        (folder / '000000002.json').write_text(json.dumps(smart | {'customer_number': '000000002'}))
+        after = catalog.data_version(['가사업소'])
+        self.assertNotEqual(before, after)
+        data = catalog.payload(['가사업소'])
+        self.assertEqual(data['arisu'], {'000000001': smart})
+        self.assertEqual(catalog.payload([])['arisu'], {})
+        self.assertEqual(data['daily'], {})
+        self.assertEqual(data['risk'], {})
+        with patch.object(catalog, 'today', return_value=date(2026, 10, 25)):
+            self.assertEqual(catalog.payload()['status']['today'], '2026-10-25')
+            self.assertNotEqual(catalog.data_version(['가사업소']), after)
+        (folder / '000000001.json').write_text(json.dumps(smart | {'customer_number': '000000002'}))
+        self.assertEqual(catalog.payload(['가사업소'])['arisu'], {})
+
+    def test_collected_usage_is_visible_before_snapshot_publication_and_invalidates_cache(self):
+        published = {'000000001': {'usage': [{'date': '2026-10-22', 'value': 10}], 'ridership': []}}
+        old_risk = {'000000001': [{'date': '2026-10-22', 'severity': '정상', 'actual': 10, 'pred': 9}]}
+        version = config.DATA_DIR / 'snapshot/versions/previous'
+        version.mkdir(parents=True)
+        (version / 'daily.json').write_text(json.dumps(published))
+        (version / 'risk.json').write_text(json.dumps(old_risk))
+        (version.parent.parent / 'manifest.json').write_text('{"published":true,"directory":"versions/previous"}')
+        path = config.DATA_DIR / 'daily/water/2026-10-23.csv'
+        rows = [{'고객번호': cid, '사용일': '2026-10-23', '일사용량(톤)': value, '상태': '정상'}
+                for cid, value in [('000000001', '0'), ('000000002', '90')]]
+        with patch.object(catalog, 'today', return_value=date(2026, 10, 24)):
+            before = catalog.data_version(['가사업소'])
+            self.write_csv(path, rows)
+            self.write_csv(config.DATA_DIR / 'daily/ridership/2026-10-23.csv', [
+                {'고객번호': '000000001', '날짜': '2026-10-23', '총승객수': '123'}])
+            after = catalog.data_version(['가사업소'])
+            self.assertNotEqual(before, after)
+            with patch.object(catalog, 'read_csv', wraps=catalog.read_csv) as read:
+                data = catalog.payload(['가사업소'])
+                again = catalog.payload(['가사업소'])
+            self.assertEqual(read.call_count, 2)  # unchanged source files are not reparsed
+            self.assertEqual(data['daily'], again['daily'])
+            self.assertEqual(set(data['daily']), {'000000001'})
+            self.assertEqual(data['daily']['000000001']['usage'], [
+                {'date': '2026-10-22', 'value': 10}, {'date': '2026-10-23', 'value': 0.0}])
+            self.assertEqual(data['daily']['000000001']['ridership'], [{'date': '2026-10-23', 'value': 123.0}])
+            self.assertEqual(data['status']['latest_usage'], '2026-10-23')
+            self.assertEqual(data['risk'], old_risk)
+            self.assertEqual(catalog.data_sources(), (published, old_risk))
+            rows[0]['일사용량(톤)'] = '17'
+            self.write_csv(path, rows)
+            self.assertNotEqual(after, catalog.data_version(['가사업소']))
+            self.assertEqual(catalog.payload(['가사업소'])['daily']['000000001']['usage'][-1]['value'], 17)
+            self.assertEqual(catalog.payload([])['daily'], {})
+
+    def test_collected_overlay_rejects_unfinished_abnormal_and_invalid_rows(self):
+        valid = {'고객번호': '000000001', '사용일': '2026-10-22', '일사용량(톤)': '12', '상태': ''}
+        self.write_csv(config.DATA_DIR / 'daily/water/2026-10-23.csv', [valid, *[
+            valid | change for change in (
+                {'사용일': '2026-10-23', '일사용량(톤)': '-1'},
+                {'사용일': '2026-10-21', '일사용량(톤)': 'NaN'},
+                {'사용일': '2026-10-20', '일사용량(톤)': ''},
+                {'사용일': '2026-10-19', '상태': '계량기 장애'},
+                {'사용일': '2026-10-18', '상태': '수집중'},
+                {'사용일': '2026-02-30'}, {'사용일': '20261017'},
+                {'사용일': '2026-10-24'}, {'사용일': '2026-10-25'},
+                {'고객번호': 'not-a-customer'},
+            )]])
+        with patch.object(catalog, 'today', return_value=date(2026, 10, 24)):
+            data = catalog.payload(['가사업소'])
+        self.assertEqual(data['daily'], {'000000001': {
+            'usage': [{'date': '2026-10-22', 'value': 12.0}], 'ridership': []}})
+        self.assertEqual(data['risk'], {})
+        self.assertEqual(catalog.data_sources(), ({}, {}))
+
+    def test_arisu_reading_faults_are_scoped_even_without_smart_card(self):
+        before = catalog.data_version(['가사업소'])
+        for cid in ('000000001', '000000002'):
+            folder = config.DATA_DIR / 'raw/remote_meter' / cid
+            folder.mkdir(parents=True)
+            readings = [{'date': '2026-10-22', 'measured_at': '2026-10-23 00:00', 'status': '계량기 장애'}]
+            (folder / 'statuses.json').write_text(json.dumps({'customer_number': cid, 'readings': readings}))
+        data = catalog.payload(['가사업소'])
+        self.assertNotEqual(before, catalog.data_version(['가사업소']))
+        self.assertEqual(data['arisu'], {'000000001': {'customer_number': '000000001', 'readings': readings}})
+        self.assertEqual(data['risk'], {})
+        self.assertEqual(catalog.payload([])['arisu'], {})
 
     def test_position_fix_moves_only_stations_still_on_the_shared_point(self):
         with db.connect() as conn:

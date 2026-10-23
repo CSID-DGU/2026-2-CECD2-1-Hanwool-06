@@ -35,6 +35,8 @@ NCP Object Storage(S3 호환 API)에 `APP_DATA_DIR`의 장기 보관 파일을 �
 | 운영 DB | `app.sqlite3`, `-wal`, `-shm`, `-journal`, `.app-backup.*` | ✗ | 백업만 `backups/sqlite/app-<UTC시각>.sqlite3` |
 | 잠금·임시 파일 | `*.lock`, `.<name>.XXXXXX` | ✗ | |
 | 수집 상태 | `collection/<고객번호>.json` | ✓ | 확인한 달·제외일 기록 |
+| 스마트검침 상태 | `arisu/<고객번호>.json` | ✓ | 아리수 누수위험·계량기 상태·실시간 사용량·원본 갱신 시각. 모델 판정과 별도 |
+| 원격검침 조회 원본 | `raw/remote_meter/<고객번호>/` | ✓ | 과거·일별 응답 전체. 비정상 상태와 검침 시각도 보존 |
 | 일일 사용량 | `daily/water/<날짜>.csv`, `.status.json` | ✓ | 아리수 원본 관측 |
 | 일별 승하차 | `daily/ridership/<날짜>.csv`, `.status.json` | ✓ | API는 최근 1주만 제공 |
 | 청구서 원본 | `raw/billing_i121/i121_bills/` | ✓ | `bills_long.csv` 는 모델 청구 기준값 입력 |

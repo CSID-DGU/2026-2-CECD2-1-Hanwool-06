@@ -51,6 +51,12 @@ class PipelineTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name)
+        self.smart_fetch = patch.object(water, 'fetch_smart_status', side_effect=lambda _session, meter: {
+            'customer_number': meter['customer_number'], 'leak_status': '안전', 'meter_status': None,
+            'realtime_usage': 0, 'updated_at': '2026-06-02 00:00', 'collected_at': '2026-06-02T08:00:00+09:00',
+        })
+        self.smart_fetch.start()
+        self.addCleanup(self.smart_fetch.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -108,7 +114,8 @@ class PipelineTest(unittest.TestCase):
         session.get.return_value = reading_response(reading_payload(0))
         row = water.fetch_month(session, METERS[0], '2026-06')[0]
         self.assertEqual((row['일사용량(톤)'], row['납기별누적사용량(톤)']), ('0', '0'))
-        self.assertEqual((row['사용일'], row['검침일자'], row['지침값']), ('2026-06-01', '2026-06-02', '1000'))
+        self.assertEqual((row['사용일'], row['검침일자'], row['지침값'], row['상태']),
+                         ('2026-06-01', '2026-06-02 00:00', '1000', '정상'))
         self.assertEqual(session.get.call_args.kwargs['params']['searchEndYm'], '2026-09')
         for payload, error in [({'result': False, 'message': '로그인 시간이 만료되었습니다.'}, auth.LoginError),
                                ({'result': False, 'message': '조회 가능한 고객번호가 아닙니다.'}, auth.CustomerAccessError),
@@ -221,6 +228,119 @@ class PipelineTest(unittest.TestCase):
         with patch.object(water, 'today', return_value=date(2026, 9, 23)), self.assertRaises(ValueError):
             water.fetch_month(session, METERS[0], '2026-09')
         self.assertEqual(session._arisu_day_readings, {})
+
+    def test_water_archives_all_source_rows_and_preserves_measurement_time(self):
+        history = reading_payload()
+        detail = history['groups'][0]['details'][0]
+        history['groups'][0]['details'] = [
+            detail | {'realGcDay': '20260602134527'},
+            detail | {'measDt': '2026-06-02', 'realGcDay': None, 'status': '계량기장애', 'dayUseQty': None},
+            detail | {'measDt': '2026-05-31', 'status': '수집중', 'dayUseQty': ''},
+        ]
+        latest = reading_payload()
+        latest['groups'][0]['details'] = [detail | {'measDt': '2026-06-03', 'status': '수집중'}]
+        session = Mock()
+        session.get.side_effect = [reading_response(history), reading_response(latest)]
+        with patch.object(water, 'today', return_value=date(2026, 6, 3)):
+            rows = water.fetch_month(session, METERS[0], '2026-06', archive_dir=self.path)
+        self.assertEqual([(r['검침일자'], r['상태']) for r in rows], [('2026-06-02 13:45:27', '정상')])
+        saved_history = self.path / '000000001/history/2026-06_2026-09.json'
+        saved_day = self.path / '000000001/day/2026-06-03.json'
+        self.assertEqual(json.loads(saved_history.read_text())['payload'], history)
+        self.assertEqual(json.loads(saved_day.read_text())['payload'], latest)
+        self.assertTrue(all(path.stat().st_mode & 0o077 == 0 for path in (saved_history, saved_day)))
+        statuses = json.loads((self.path / '000000001/statuses.json').read_text())['readings']
+        self.assertEqual([r['status'] for r in statuses], ['수집중', '정상', '계량기장애', '수집중'])
+        self.assertEqual(statuses[1]['measured_at'], '2026-06-02 13:45:27')
+
+    def test_water_never_archives_another_customers_response(self):
+        session = Mock()
+        for identity in ('searchMkey', 'group'):
+            payload = reading_payload()
+            if identity == 'group':
+                payload['groups'][0]['mkey'] = '000000002'
+            else:
+                payload[identity] = '000000002'
+            session.get.return_value = reading_response(payload)
+            with self.assertRaises(ValueError):
+                water.fetch_month(session, METERS[0], '2026-06', archive_dir=self.path)
+        self.assertEqual(list(self.path.rglob('*.json')), [])
+
+    def test_water_archives_unusable_readings_before_model_validation(self):
+        history, latest = reading_payload('not-a-number'), reading_payload()
+        session = Mock()
+        session.get.side_effect = [reading_response(history), reading_response(latest)]
+        with patch.object(water, 'today', return_value=date(2026, 6, 3)), self.assertRaises(ValueError):
+            water.fetch_month(session, METERS[0], '2026-06', archive_dir=self.path)
+        self.assertEqual(len(list(self.path.rglob('*.json'))), 3)
+
+    def test_source_status_index_merges_corrections_without_losing_other_dates(self):
+        history = reading_payload()
+        detail = history['groups'][0]['details'][0]
+        history['groups'][0]['details'] += [
+            detail | {'measDt': '2026-06-02', 'realGcDay': '20260603081500', 'status': '계량기 장애'},
+            detail | {'measDt': '2026-06-03', 'realGcDay': '2026060400', 'status': '통신 장애'},
+            detail | {'measDt': '2026-06-04', 'realGcDay': 'invalid', 'status': '통신 장애'},
+            detail | {'measDt': '2026-06-31', 'status': '계량기 장애'},
+        ]
+        first = water._save_reading_statuses(self.path, history, '1')
+        self.assertEqual(len(first['readings']), 4)
+        self.assertIsNone(first['readings'][-1]['measured_at'])
+        latest = reading_payload()
+        latest['groups'][0]['details'] = [
+            detail | {'measDt': '2026-06-02', 'realGcDay': '2026-06-03 08:15:00', 'status': '정상'},
+            detail | {'measDt': '2026-06-03', 'realGcDay': '2026060300', 'status': '정상'},
+            detail | {'measDt': '2026-06-04', 'realGcDay': None, 'status': '수집중'},
+            detail | {'measDt': '2026-06-05', 'realGcDay': None, 'status': None},
+        ]
+        saved = water._save_reading_statuses(self.path, latest, '1')
+        self.assertEqual([r['date'] for r in saved['readings']], [f'2026-06-0{n}' for n in range(1, 6)])
+        self.assertEqual([r['status'] for r in saved['readings']], ['정상', '정상', '통신 장애', '수집중', None])
+        self.assertEqual(saved['readings'][1]['measured_at'], '2026-06-03 08:15:00')
+        latest['groups'][0]['details'] = [
+            detail | {'measDt': '2026-06-03', 'realGcDay': '202606041230', 'status': '정상'}]
+        final = water._save_reading_statuses(self.path, latest, '1')
+        self.assertEqual(final['readings'][2], {
+            'date': '2026-06-03', 'measured_at': '2026-06-04 12:30', 'status': '정상'})
+        self.assertEqual(len(final['readings']), 5)
+
+    def test_source_status_without_measurement_time_replaces_previous_normal(self):
+        payload = reading_payload()
+        water._save_reading_statuses(self.path, payload, '1')
+        payload['groups'][0]['details'][0].update(realGcDay=None, status='계량기 장애')
+        saved = water._save_reading_statuses(self.path, payload, '1')
+        self.assertEqual(saved['readings'], [
+            {'date': '2026-06-01', 'measured_at': None, 'status': '계량기 장애'}])
+
+    def test_status_index_keeps_raw_rows_with_invalid_dates_or_measurement_times(self):
+        payload = reading_payload()
+        detail = payload['groups'][0]['details'][0]
+        payload['groups'][0]['details'] = [
+            detail | {'measDt': '2026-06-01', 'realGcDay': None, 'status': '계량기 장애'},
+            detail | {'measDt': 'invalid', 'status': '통신 장애'}, None,
+        ]
+        water._archive_readings(self.path, payload, '000000001', 'JR_remoteMeterDayList.do', {}, 'day/test.json')
+        raw = json.loads((self.path / '000000001/day/test.json').read_text())
+        self.assertEqual(raw['payload'], payload)
+        index = json.loads((self.path / '000000001/statuses.json').read_text())
+        self.assertEqual(index, {'customer_number': '000000001', 'readings': [
+            {'date': '2026-06-01', 'measured_at': None, 'status': '계량기 장애'}]})
+
+    def test_water_range_saves_smart_once_and_retains_daily_rows_when_smart_fails(self):
+        session = Mock()
+        session.get.return_value = reading_response()
+        with patch.object(water, 'fetch_smart_status', side_effect=TimeoutError) as smart:
+            reports = water.scrape_range(date(2026, 6, 1), date(2026, 6, 2), meters=METERS[:1],
+                                        session=session, out_dir=self.path / 'daily', runtime_dir=self.path, sleep=0)
+        self.assertEqual(smart.call_count, 1)
+        self.assertEqual(reports[0]['status'], 'complete')
+        self.assertEqual(reports[0]['smart_status_errors'][0]['error'], 'TimeoutError')
+        self.assertTrue((self.path / 'daily/2026-06-01.csv').exists())
+        self.assertTrue((self.path / 'raw/remote_meter/000000001/history/2026-06_2026-09.json').exists())
+        self.assertFalse((self.path / 'arisu/000000001.json').exists())
+        water.scrape_range(date(2026, 6, 1), date(2026, 6, 2), meters=METERS[:1],
+                           session=session, out_dir=self.path / 'daily', runtime_dir=self.path, sleep=0)
+        self.assertEqual(json.loads((self.path / 'arisu/000000001.json').read_text())['realtime_usage'], 0)
 
     def test_ridership_partial_retains_previous_and_pending_never_zeros(self):
         path = self.path / '2026-06-01.csv'

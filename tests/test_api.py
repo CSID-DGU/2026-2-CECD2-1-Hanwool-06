@@ -483,7 +483,9 @@ class ApplicationTest(unittest.TestCase):
             c.execute("INSERT INTO settings VALUES('collection_schedule',?)", (json.dumps({'enabled': False, 'hour': 9}),))
             before = datetime(2026, 9, 23, 7, 59, tzinfo=collection.KST)
             with patch.object(config, 'COLLECTION_WORKER_ENABLED', True):
-                self.assertEqual(collection.settings(c, before), {'enabled': True, 'hour': 8, 'timezone': 'Asia/Seoul', 'next_run_at': '2026-09-23T08:00:00+09:00'})
+                self.assertEqual(collection.settings(c, before), {'enabled': True, 'hour': 8, 'timezone': 'Asia/Seoul',
+                    'next_run_at': '2026-09-23T08:00:00+09:00', 'smart_hours': [0, 8, 12, 18],
+                    'smart_next_run_at': '2026-09-23T07:59:00+09:00', 'smart_paused_reason': None})
             self.assertIsNone(collection.settings(c, before)['next_run_at'])
             self.assertFalse(collection.settings(c, before)['enabled'])   # 서버에서 끄면 화면에 '꺼짐'
             collection.schedule_due(c, before)

@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import config, db
+from back.pipelines.common import today
 
 
 def customer_id(value) -> str:
@@ -280,6 +281,46 @@ def data_sources():
     return loader(_signature(paths))
 
 
+def _collected_paths():
+    return sorted(path for kind in ('water', 'ridership')
+                  for path in (config.DATA_DIR / 'daily' / kind).glob('*.csv'))
+
+
+@lru_cache(maxsize=2)
+def _collected_daily(signature, before):
+    """Completed source readings remain visible while snapshot/model publication catches up."""
+    daily = {}
+    for path, *_ in signature:
+        water = Path(path).parent.name == 'water'
+        field = 'usage' if water else 'ridership'
+        for row in read_csv(path):
+            cid = customer_id(row.get('고객번호'))
+            day = row.get('사용일') or row.get('날짜')
+            value = number(row.get('일사용량(톤)', row.get('일사용량_톤')) if water else row.get('총승객수'))
+            if not re.fullmatch(r'\d{9}', cid) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', str(day or '')):
+                continue
+            try:
+                Date.fromisoformat(day)
+            except ValueError:
+                continue
+            if day >= before or value is None or value < 0 or water and row.get('상태') not in (None, '', '정상'):
+                continue
+            daily.setdefault(cid, {}).setdefault(field, {})[day] = value
+    return daily
+
+
+def _with_collected_daily(daily):
+    collected = _collected_daily(_signature(_collected_paths()), str(today()))
+    combined = dict(daily)
+    for cid, fields in collected.items():
+        entry = dict(daily.get(cid, {'usage': [], 'ridership': []}))
+        for field, updates in fields.items():
+            values = {row['date']: row['value'] for row in entry.get(field, [])} | updates
+            entry[field] = [{'date': day, 'value': value} for day, value in sorted(values.items())]
+        combined[cid] = entry
+    return combined
+
+
 def data_version(office_ids=None):
     """Fingerprint of everything payload() reads for this scope, without building it.
 
@@ -290,7 +331,10 @@ def data_version(office_ids=None):
     # ponytail: file stats rely on the filesystem's mtime resolution (ns on ext4/xfs/APFS).
     # Keep a version counter in the database if this ever runs on coarser storage.
     wal = _stat(f"{config.APP_DB_PATH}-wal")
-    state = (office_ids, _stat(config.APP_DB_PATH), wal if wal and wal[1] else None, _signature(_sources()[1]))
+    arisu_paths = sorted((config.DATA_DIR / 'arisu').glob('*.json'))
+    arisu_paths += sorted((config.DATA_DIR / 'raw/remote_meter').glob('*/statuses.json'))
+    state = (office_ids, str(today()), _stat(config.APP_DB_PATH), wal if wal and wal[1] else None,
+             _signature(_sources()[1]), _signature(arisu_paths), _signature(_collected_paths()))
     return hashlib.sha256(repr(state).encode()).hexdigest()[:32]
 
 
@@ -319,9 +363,10 @@ def payload(allowed_office_ids=None):
         offices = [{"id": r["id"], "name": r["name"]} for r in conn.execute("SELECT * FROM offices ORDER BY name")
                    if allowed_office_ids is None or r["id"] in allowed_office_ids]
     all_daily, all_risk = data_sources()
+    all_daily = _with_collected_daily(all_daily)
     # Meters the last model run left out because their training/validation history was too short.
     history_short = {w.get("customer_number") for w in _json(config.DATA_DIR / "snapshot" / "manifest.json").get("withheld", [])}
-    bills, stations, daily, risk, locations = {}, {}, {}, {}, {}
+    bills, stations, daily, risk, locations, arisu = {}, {}, {}, {}, {}, {}
     counts = dict.fromkeys(("daily", "billing_only", "pending"), 0)
     for m in meters:
         mid, cid = m["id"], m["customer_number"]
@@ -336,6 +381,13 @@ def payload(allowed_office_ids=None):
                          "daily_enabled": bool(m["daily_enabled"]), "purpose": m["purpose"], "data_mode": m["data_mode"],
                          "history_short": cid in history_short}
         if m["provider"] == "arisu" and m['daily_enabled']:
+            if re.fullmatch(r'\d{9}', cid):
+                smart = _json(config.DATA_DIR / "arisu" / f"{cid}.json")
+                if isinstance(smart, dict) and smart.get('customer_number') == cid:
+                    arisu[mid] = smart
+                readings = _json(config.DATA_DIR / "raw/remote_meter" / cid / "statuses.json")
+                if isinstance(readings, dict) and readings.get('customer_number') == cid and isinstance(readings.get('readings'), list):
+                    arisu.setdefault(mid, {'customer_number': cid})['readings'] = readings['readings']
             if cid in all_daily:
                 daily[mid] = all_daily[cid]
             if m["data_mode"] == "daily" and cid in all_risk:
@@ -346,8 +398,8 @@ def payload(allowed_office_ids=None):
     latest_usage = max((r["date"] for mid, v in daily.items() if mid in active_ids for r in v.get("usage", [])), default=None)
     latest_ridership = max((r["date"] for mid, v in daily.items() if mid in active_ids for r in v.get("ridership", [])), default=None)
     latest_risk = max((r["date"] for mid, rs in risk.items() if mid in active_ids for r in rs), default=None)
-    return {"bills": bills, "stations": stations, "daily": daily, "risk": risk, "meters": meters,
+    return {"bills": bills, "stations": stations, "daily": daily, "risk": risk, "arisu": arisu, "meters": meters,
             "offices": offices, "locations": locations,
-            "status": {"reference_date": latest_risk or latest_usage or latest_ridership,
+            "status": {"today": str(today()), "reference_date": latest_risk or latest_usage or latest_ridership,
                        "latest_usage": latest_usage, "latest_ridership": latest_ridership, "latest_risk": latest_risk,
                        "counts": counts}}

@@ -6,6 +6,7 @@ NCP 운영 서버(`water-prod`, Ubuntu 24.04)에 실제로 깔려 있는 설정 
 
 | 시각(KST) | 무엇이 | 하는 일 |
 |---|---|---|
+| 00:00, 12:00, 18:00 | 웹 서버(`water-monitor.service`) 안의 수집기 | 아리수 누수위험·계량기 상태만 확인(스마트검침 카드와 일별내역의 날짜별 상태). 사용량·청구서·모델은 건드리지 않음. 08:00 확인은 아래 전체 수집이 같이 함 |
 | 03:30 | `water-backup.timer` → `water-backup.sh` | DB 사본 + 데이터 폴더(이력 자료 `history/` 포함) + 지금 화면용 스냅샷을 묶어 Object Storage `hanwool-water-backup/daily/<날짜>/`에 올림. 서버에 7일, 스토리지에 180일 보관 |
 | 08:00 | 웹 서버(`water-monitor.service`) 안의 수집기 | 아리수 일일 사용량·청구서 수집. 일시 오류는 30분 간격 최대 2번 재시도, 남은 실패는 총괄 관리자에게 메일. 다 끝나면 `settings.collection_auto_settled`에 날짜를 남김 |
 | 08:05~ | `water-refresh.timer` → `water-refresh.sh` | 위 표시가 생길 때까지 1분마다 확인 → 승하차 수집(전날 자료가 없으면 10분마다 다시, 최대 1시간) → 모델 갱신 → 성공하면 아래 14:00 보관을 바로 한 번 더 실행(`OnSuccess`. 채팅이 버킷 사본을 읽어서, 이게 없으면 14:00까지 채팅이 화면보다 하루 늦음) |

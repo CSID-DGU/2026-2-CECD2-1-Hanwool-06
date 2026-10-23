@@ -1,4 +1,4 @@
-"""Persistent collection queue and one daily KST run, owned by the API process."""
+"""Persistent daily collection and Arisu status checks, owned by the API process."""
 import fcntl
 import logging
 import os
@@ -12,6 +12,9 @@ from . import auth, catalog, config, db, mailer
 KST = ZoneInfo('Asia/Seoul')
 # Fixed daily run; COLLECTION_WORKER_ENABLED=false pauses it. Old 'collection_schedule' rows are ignored.
 DAILY_HOUR = 8
+# Arisu leak risk and meter status are also checked at these KST hours; the daily run is the 08:00 check.
+# The source reads its meters once at midnight, so more checks would mostly fetch the same values.
+SMART_HOURS = (0, 12, 18)
 # Network failures in that run are retried twice, 30 minutes apart; what still fails is mailed to superadmins once.
 RETRY_LIMIT, RETRY_DELAY = 2, timedelta(minutes=30)
 ACTIVE = ('queued', 'running')
@@ -33,8 +36,51 @@ def settings(c, current=None):
         next_run += timedelta(days=1)
     elif next_run < current:
         next_run = current
+    smart_paused = _smart_login_paused(c)
     return {'enabled': config.COLLECTION_WORKER_ENABLED, 'hour': DAILY_HOUR, 'timezone': 'Asia/Seoul',
-            'next_run_at': next_run.isoformat() if config.COLLECTION_WORKER_ENABLED else None}
+            'next_run_at': next_run.isoformat() if config.COLLECTION_WORKER_ENABLED else None,
+            'smart_hours': sorted((*SMART_HOURS, DAILY_HOUR)),
+            'smart_next_run_at': _smart_next_run(c, current).isoformat() if config.COLLECTION_WORKER_ENABLED and not smart_paused else None,
+            'smart_paused_reason': 'login_rejected' if smart_paused else None}
+
+
+def _smart_login_paused(c):
+    """A rejected login stops status checks until a later job logs in, since every check would log in again."""
+    return bool(c.execute("SELECT 1 FROM settings WHERE key='collection_login_rejected'").fetchone())
+
+
+def _smart_due(c, current):
+    """True once the latest SMART_HOURS slot has passed without a check (the daily run counts as one)."""
+    last = c.execute("SELECT value FROM settings WHERE key='collection_smart_at'").fetchone()
+    passed = [h for h in SMART_HOURS if h <= current.hour]
+    day = current if passed else current - timedelta(days=1)   # before the first slot, yesterday's last one counts
+    slot = day.replace(hour=max(passed or SMART_HOURS), minute=0, second=0, microsecond=0)
+    return not last or datetime.fromisoformat(last[0]) < slot
+
+
+def _smart_next_run(c, current):
+    if _smart_due(c, current):
+        return current
+    hours = sorted((*SMART_HOURS, DAILY_HOUR))
+    start = current.replace(minute=0, second=0, microsecond=0)
+    later = [h for h in hours if h > current.hour]
+    return start.replace(hour=later[0]) if later else start.replace(hour=hours[0]) + timedelta(days=1)
+
+
+def schedule_smart_due(c, current=None):
+    """Use the same queue; missed checks coalesce into one after a restart or a long job."""
+    current = current or datetime.now(KST)
+    if (not config.COLLECTION_WORKER_ENABLED or _smart_login_paused(c) or not _smart_due(c, current)
+            or c.execute("SELECT 1 FROM collection_jobs WHERE status IN ('queued','running')").fetchone()):
+        return None
+    ids = [m['id'] for m in catalog.list_meters(c)
+           if m['active'] and m['daily_enabled'] and m['provider'] == 'arisu']
+    if not ids:
+        return None
+    job_id = enqueue(c, ids, 'smart_status')
+    c.execute("INSERT INTO settings VALUES('collection_smart_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+              (current.isoformat(),))
+    return job_id
 
 
 def enqueue(c, meter_ids, trigger, actor_id=None):
@@ -99,11 +145,14 @@ def status(user):
         active = [v for v in views if v['status'] in ACTIVE]
         running = next((v for v in reversed(active) if v['status'] == 'running'), active[-1] if active else None)
         states = []
+        # The latest job and each meter's state describe full collections, so a status check cannot hide a failed
+        # 08:00 run; a status check still shows while it is queued or running, and in the history.
+        full = "job_id NOT IN (SELECT id FROM collection_jobs WHERE trigger='smart_status')"
         for meter in meters:
             if meter['provider'] != 'arisu':
                 continue
-            latest = c.execute('SELECT * FROM collection_items WHERE meter_id=? ORDER BY job_id DESC LIMIT 1', (meter['id'],)).fetchone()
-            success = c.execute('SELECT finished_at FROM collection_items WHERE meter_id=? AND connection_verified=1 ORDER BY job_id DESC LIMIT 1', (meter['id'],)).fetchone()
+            latest = c.execute(f"SELECT * FROM collection_items WHERE meter_id=? AND (status IN ('queued','running') OR {full}) ORDER BY job_id DESC LIMIT 1", (meter['id'],)).fetchone()
+            success = c.execute(f'SELECT finished_at FROM collection_items WHERE meter_id=? AND connection_verified=1 AND {full} ORDER BY job_id DESC LIMIT 1', (meter['id'],)).fetchone()
             states.append({'meter_id': meter['id'], 'status': latest['status'] if latest else 'unverified',
                 'message': latest['message'] if latest else '아리수 연결 확인 전입니다.',
                 'last_attempt_at': latest['started_at'] if latest else None,
@@ -111,7 +160,8 @@ def status(user):
                 'daily_rows': latest['daily_rows'] if latest else 0, 'bill_rows': latest['bill_rows'] if latest else 0,
                 'connection_verified': bool(success)})
         return {'settings': settings(c), 'configured': configured(), 'worker_enabled': config.COLLECTION_WORKER_ENABLED,
-                'running': running, 'latest': views[0] if views else None, 'history': views[:20], 'meters': states}
+                'running': running, 'latest': next((v for v in views if v['trigger'] != 'smart_status'), None),
+                'history': views[:20], 'meters': states}
 
 
 def schedule_due(c, current=None):
@@ -125,6 +175,8 @@ def schedule_due(c, current=None):
         ids = [m['id'] for m in catalog.list_meters(c) if m['active'] and m['provider'] == 'arisu']
         if ids:
             enqueue(c, ids, 'automatic')
+            # The daily run reads the same card and day list, so it is also the 08:00 status check.
+            c.execute("INSERT INTO settings VALUES('collection_smart_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (current.isoformat(),))
         c.execute("INSERT INTO settings VALUES('collection_auto_day',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (day,))
         if not ids:   # nothing to collect today, so the refresh timer need not wait
             c.execute("INSERT INTO settings VALUES('collection_auto_settled',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (day,))
@@ -137,9 +189,10 @@ def schedule_due(c, current=None):
     start = c.execute("SELECT max(id) FROM collection_jobs WHERE trigger='automatic'").fetchone()[0]
     jobs = c.execute("SELECT id,trigger,finished_at FROM collection_jobs WHERE id>=? AND trigger IN ('automatic','automatic_retry')", (start,)).fetchall()
     marks = ','.join('?' for _ in jobs)
-    # Each meter's latest result counts, including a manual update after the automatic run.
+    # Only full collection results can settle the daily history/billing run.
     latest = c.execute(f'SELECT i.* FROM collection_items i JOIN (SELECT meter_id,max(job_id) job_id FROM collection_items '
-                       f'WHERE meter_id IN (SELECT meter_id FROM collection_items WHERE job_id IN ({marks})) GROUP BY meter_id) '
+                       f"WHERE job_id IN (SELECT id FROM collection_jobs WHERE trigger!='smart_status') "
+                       f'AND meter_id IN (SELECT meter_id FROM collection_items WHERE job_id IN ({marks})) GROUP BY meter_id) '
                        'USING(meter_id,job_id) ORDER BY meter_id', [j['id'] for j in jobs]).fetchall()
     failed = [r for r in latest if r['status'] in FAILED and r['meter_id'] in meters]
     retry = [r['meter_id'] for r in failed if r['status'] == 'interrupted' or r['retryable']]
@@ -178,6 +231,9 @@ def run_job(job_id, stop):
     from back.pipelines.incremental import collect_meter
     from back.scripts.billing_etl.i121_crawler.auth import collection_session, transient
     session = None
+    with db.connect() as c:
+        job = c.execute('SELECT trigger FROM collection_jobs WHERE id=?', (job_id,)).fetchone()
+    status_only = bool(job and job['trigger'] == 'smart_status')
 
     def collect_shared(meter, progress):
         nonlocal session
@@ -192,7 +248,10 @@ def run_job(job_id, stop):
             if isinstance(login_error, str) and not transient(login_error):
                 with db.connect() as c:
                     c.execute("INSERT INTO settings VALUES('collection_login_rejected',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(job_id),))
-        return collect_meter(meter, progress=progress, session=session)
+            elif not isinstance(login_error, str) and isinstance(getattr(session, 'arisu_customer_numbers', None), frozenset):
+                with db.connect() as c:
+                    c.execute("DELETE FROM settings WHERE key='collection_login_rejected'")
+        return collect_meter(meter, progress=progress, session=session, **({'status_only': True} if status_only else {}))
     try:
         _run_job(job_id, stop, collect_shared)
     finally:
@@ -229,6 +288,8 @@ def failure_result(exc):
 
 def _run_job(job_id, stop, collect_meter):
     with db.connect() as c:
+        job = c.execute('SELECT trigger FROM collection_jobs WHERE id=?', (job_id,)).fetchone()
+        status_only = bool(job and job['trigger'] == 'smart_status')
         ids = [r[0] for r in c.execute("SELECT meter_id FROM collection_items WHERE job_id=? AND status='queued' ORDER BY meter_id", (job_id,))]
     for meter_id in ids:
         if stop.is_set():
@@ -239,7 +300,7 @@ def _run_job(job_id, stop, collect_meter):
             if not pending or pending['status'] != 'queued':
                 continue
             meter = next((m for m in catalog.list_meters(c) if m['id'] == meter_id), None)
-            if not meter or not meter['active'] or meter['provider'] != 'arisu':
+            if not meter or not meter['active'] or meter['provider'] != 'arisu' or status_only and not meter['daily_enabled']:
                 c.execute("UPDATE collection_items SET status='skipped',message='삭제 또는 비활성화되어 수집에서 제외했습니다.',finished_at=? WHERE job_id=? AND meter_id=?", (db.now(), job_id, meter_id))
                 continue
             c.execute("UPDATE collection_items SET status='running',started_at=?,message='아리수 연결을 확인하고 있습니다.' WHERE job_id=? AND meter_id=?", (db.now(), job_id, meter_id))
@@ -255,7 +316,8 @@ def _run_job(job_id, stop, collect_meter):
         if result.get('setup_failed'):
             with db.connect() as c:
                 c.execute('BEGIN IMMEDIATE')
-                c.execute("UPDATE collection_items SET status='skipped',message='삭제 또는 비활성화되어 수집에서 제외했습니다.',finished_at=? WHERE job_id=? AND status='queued' AND meter_id NOT IN (SELECT id FROM meters WHERE active=1 AND deleted_at IS NULL AND provider='arisu')", (db.now(), job_id))
+                daily_filter = ' AND daily_enabled=1' if status_only else ''
+                c.execute("UPDATE collection_items SET status='skipped',message='삭제 또는 비활성화되어 수집에서 제외했습니다.',finished_at=? WHERE job_id=? AND status='queued' AND meter_id NOT IN (SELECT id FROM meters WHERE active=1 AND deleted_at IS NULL AND provider='arisu'" + daily_filter + ')', (db.now(), job_id))
                 c.execute("UPDATE collection_items SET status=?,message=?,retryable=?,started_at=COALESCE(started_at,?),finished_at=? WHERE job_id=? AND status IN ('queued','running')",
                           (result['status'], '아리수 연결 단계에서 중단했습니다. ' + result['message'], int(result.get('retryable', False)), db.now(), db.now(), job_id))
             break
@@ -297,6 +359,7 @@ def worker(stop):
                     c.execute("UPDATE collection_items SET status=?,message=?,finished_at=? WHERE job_id IN (SELECT id FROM collection_jobs WHERE status='running') AND status IN ('queued','running')", (state, message, db.now()))
                     c.execute("UPDATE collection_jobs SET status=?,finished_at=? WHERE status='running'", (state, db.now()))
                     alert = schedule_due(c)
+                    schedule_smart_due(c)
                     row = c.execute("SELECT id FROM collection_jobs WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
                     if row:
                         c.execute("UPDATE collection_jobs SET status='running',started_at=? WHERE id=?", (db.now(), row[0]))

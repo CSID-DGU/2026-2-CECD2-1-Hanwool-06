@@ -327,7 +327,7 @@ def _run(args):
     if args.water:
         from back.pipelines.daily_water.scraper import scrape_range
         try:
-            result = scrape_range(args.start, args.end, meters=meters, out_dir=runtime / "daily" / "water")
+            result = scrape_range(args.start, args.end, meters=meters, out_dir=runtime / "daily" / "water", runtime_dir=runtime)
             report["steps"]["water"] = result
             if any(r["errors"] for r in result):
                 report["errors"].append("water collection failed")
@@ -405,6 +405,8 @@ def _run(args):
                 anomalies=anomalies, withheld=withheld, previous_risk=previous_risk)
         except Exception as exc:
             report["errors"].append(f"model: {type(exc).__name__}: {exc}")
+    if any(step.get("smart_status_errors") for step in report["steps"].get("water", [])):
+        report["errors"].append("아리수 스마트검침 상태를 일부 갱신하지 못했습니다")
     write_json(runtime / "refresh_report.json", report)
     # Everything this run produced is on disk; mirror the changed files to Object Storage (no-op when disabled).
     from back.storage.hooks import after_refresh

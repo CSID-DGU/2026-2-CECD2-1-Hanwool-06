@@ -27,6 +27,8 @@ LOCK = Category('lock', '프로세스 잠금 파일', False, '실행 중인 프�
 TEMP = Category('temp', '임시 파일', False, '쓰기 도중 생기는 임시 파일')
 INDEX = Category('storage_index', 'Object Storage 색인·보고서', False, '이 모듈이 로컬에 남기는 기록')
 COLLECTION_STATE = Category('collection_state', '계량기별 수집 상태(collection/*.json)', True, '어느 달을 확인했는지 기록. 잃으면 지난 12개월을 다시 조회한다')
+ARISU_STATUS = Category('arisu_status', '아리수 스마트검침 상태(arisu)', True, '누수위험·계량기 상태·실시간 사용량과 원본 갱신 시각')
+RAW_REMOTE_METER = Category('raw_remote_meter', '원격검침 조회 원본(raw/remote_meter)', True, '과거·일별 내역의 모든 상태와 검침 시각을 그대로 보관한다')
 DAILY_WATER = Category('daily_water', '수집한 일일 사용량(daily/water)', True, '아리수에서 받은 원본 관측. 재수집에 시간이 들고 과거 값은 다시 못 받을 수 있다')
 DAILY_RIDERSHIP = Category('daily_ridership', '수집한 일별 승하차(daily/ridership)', True, '일별 API는 최근 1주일만 제공한다')
 RAW_BILLS = Category('raw_bills', '청구서 수집 원본(raw/billing_i121/i121_bills)', True, '모델 청구 기준값의 입력(bills_long.csv)')
@@ -42,7 +44,7 @@ REPORT = Category('report', '실행 보고서', True, 'refresh_report.json 등 �
 HISTORY = Category('history', '과거 이력 자료(history)', True, '모델 학습 이력·계량기 매핑·초기 자료·옛 수집 폴더. 저장소에 두지 않으므로 버킷이 원본이다')
 OTHER = Category('other', '그 밖의 파일', True, '분류되지 않은 파일도 누락 없이 복사한다')
 
-CATEGORIES = [DATABASE, LOCK, TEMP, INDEX, COLLECTION_STATE, DAILY_WATER, DAILY_RIDERSHIP, RAW_BILLS, RAW_BILL_CACHE,
+CATEGORIES = [DATABASE, LOCK, TEMP, INDEX, COLLECTION_STATE, ARISU_STATUS, RAW_REMOTE_METER, DAILY_WATER, DAILY_RIDERSHIP, RAW_BILLS, RAW_BILL_CACHE,
               RAW_RIDERSHIP_MONTHLY, DATASET, PROCESSED, MODEL, SNAPSHOT, OLD_SNAPSHOT, REPORT, HISTORY, OTHER]
 
 INDEX_FILE = '.object-storage-index.json'
@@ -71,12 +73,16 @@ def classify(relative: PurePosixPath | str) -> Category:
         return TEMP
     if parts[0] == 'collection':
         return COLLECTION_STATE
+    if parts[0] == 'arisu':
+        return ARISU_STATUS
     if parts[0] == 'daily' and len(parts) > 1:
         if parts[1] == 'water':
             return DAILY_WATER
         if parts[1] == 'ridership':
             return DAILY_RIDERSHIP
     if parts[0] == 'raw' and len(parts) > 1:
+        if parts[1] == 'remote_meter':
+            return RAW_REMOTE_METER
         if parts[1] == 'billing_i121' and len(parts) > 2:
             if parts[2] == 'i121_cache':
                 return RAW_BILL_CACHE

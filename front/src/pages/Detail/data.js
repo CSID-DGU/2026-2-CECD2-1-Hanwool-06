@@ -135,6 +135,32 @@ export function isDetailDate(value) {
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
+// 아리수 원본 시각("2026-10-24 00:00", 조회 시각은 ISO)을 "10/24 00:00"으로 줄인다. 형식이 다르면 빈 문자열.
+export function arisuTime(value) {
+  const match = /^\d{4}-(\d{2})-(\d{2})[ T](\d{2}:\d{2})/.exec(typeof value === "string" ? value : "");
+  return match ? `${Number(match[1])}/${Number(match[2])} ${match[3]}` : "";
+}
+
+// 아리수 원문 상태는 그대로 쓰고 색만 고른다. 모르는 문구를 안전으로 보지 않는다.
+export function arisuStatus(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (/장애|고장|(?:통신|수신)\s*오류/.test(text)) return { text, tone: "alert" };
+  return { text: text || "—", tone: ({ 안전: "ok", 정상: "ok", 주의: "warn", 경고: "alert" })[text] || "unknown" };
+}
+
+// 아리수가 보여 주는 지금 상태. 누수위험·실시간 사용량은 카드 갱신 시각, 계량기 상태는 마지막 검침 시각이 기준이다.
+// 카드가 장애 문구로 바뀌었으면 그 문구가 계량기 상태다. 실시간 사용량은 자정 검침이면 대개 전날 확정 사용량과 같다.
+export function arisuNow(arisu) {
+  const fault = arisu?.meter_status;
+  const reading = arisu?.readings?.at(-1);
+  const cardAt = arisuTime(arisu?.updated_at);
+  return {
+    leak: arisuStatus(arisu?.leak_status || (fault ? "" : arisu?.notice)), cardAt,
+    usage: Number.isFinite(arisu?.realtime_usage) ? arisu.realtime_usage : null,
+    meter: arisuStatus(fault || reading?.status), meterAt: fault ? cardAt : arisuTime(reading?.measured_at),
+    checkedAt: arisuTime(arisu?.collected_at),
+  };
+}
 export const detailHref = (meterId, date) => `#/detail?meter=${encodeURIComponent(meterId)}${isDetailDate(date) ? `&date=${date}` : ""}`;
 export const billNoticeNumber = (bill) => String(bill.notice_number || bill.고지번호 || "").trim();
 export const billLabel = (bill) => `${bill.gubun || "정기분"}${billNoticeNumber(bill) ? ` (고지번호 ${billNoticeNumber(bill)})` : ""}`;

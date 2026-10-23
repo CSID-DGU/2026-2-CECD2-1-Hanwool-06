@@ -11,8 +11,16 @@ and bills for active Arisu contracts, including newly registered bill-only contr
 The explicit range CLI uses `daily_enabled` for daily water/ridership collection.
 Other providers remain visible in the catalog but are not sent to Arisu.
 
-The web server owns the daily schedule (fixed at 08:00 Asia/Seoul), persisted jobs, and
-manual updates. Meters that failed on a network error (timeout, connection, HTTP 429/5xx) or
+The web server owns the daily schedule (fixed at 08:00 Asia/Seoul), Arisu status checks at 00:00,
+12:00 and 18:00, persisted jobs, and manual updates. A status check reads the smart-meter card and
+the DayList for active daily-enabled Arisu contracts and saves only the leak risk, meter statuses,
+realtime figure and source timestamps; usage files, History, bills and the model stay with the
+daily run, which is also the 08:00 check. Arisu reads its meters once at midnight, so more checks
+would mostly fetch the same values. The queue records the last check across restarts; missed
+checks become one current check. A rejected login pauses status checks until a later job logs in,
+so a wrong password still costs one failed login a day. A failed card read in the daily run is a
+note only: it never fails, retries or mails that run. `COLLECTION_WORKER_ENABLED=false` pauses both
+schedules. Meters that failed in the daily run on a network error (timeout, connection, HTTP 429/5xx) or
 were interrupted are retried twice, 30 minutes apart; a rejected login is never retried because
 each retry logs in again. When the day's run settles (`collection_auto_settled` in `settings`),
 active superadmins get one mail listing what still failed.

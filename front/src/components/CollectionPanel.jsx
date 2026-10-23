@@ -99,6 +99,7 @@ function Panel({ collection, meters = [], meterId, showSettings = false }) {
       <p className="collection-schedule">
         자동 수집 {settings?.enabled ? `매일 ${String(settings.hour).padStart(2, "0")}:00` : "꺼짐"}
         {settings?.enabled && settings.next_run_at ? `, 다음 실행 ${collectionTime(settings.next_run_at)}` : ""}
+        {dailySelected && settings?.enabled && settings.smart_hours && <span>아리수 상태 확인 {settings.smart_hours.join("·")}시{settings.smart_next_run_at ? `, 다음 ${collectionTime(settings.smart_next_run_at)}` : settings.smart_paused_reason === "login_rejected" ? " (로그인 거부로 멈춤)" : ""}</span>}
         <button type="button" className="text-button" onClick={collection.refresh}>상태 새로고침</button>
       </p>
       {showSettings && <p className="form-hint">서버가 켜져 있어야 실행됩니다.</p>}
@@ -125,7 +126,7 @@ function Panel({ collection, meters = [], meterId, showSettings = false }) {
 
 function JobSummary({ job, meters, title, progress = false }) {
   return <div className={`collection-job collection-job--${job.status}`}>
-    <div className="collection-job-title"><strong>{title ? `${title}: ` : ""}{collectionLabel(job.status)}</strong><span>{job.completed || 0} / {job.total || 0}개</span></div>
+    <div className="collection-job-title"><strong>{title ? `${title}: ` : ""}{job.trigger === "smart_status" ? "아리수 상태 확인, " : ""}{collectionLabel(job.status)}</strong><span>{job.completed || 0} / {job.total || 0}개</span></div>
     {progress && <progress aria-label="수집 진행률" max={Math.max(job.total || 0, 1)} value={job.completed || 0} />}
     {(job.message || job.status === "queued") && <p>{job.message || "앞 작업이 끝나면 시작합니다."}</p>}
     <small>시작 {collectionTime(job.started_at)}{job.finished_at ? `, 종료 ${collectionTime(job.finished_at)}` : ""}</small>

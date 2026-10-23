@@ -28,9 +28,7 @@ export default function StationTable({ stations, total = stations.length, filter
         <label className="form-field table-search">검색
           <input type="search" value={filters.searchTerm ?? ""} onChange={(event) => onFilterChange?.("searchTerm", event.target.value)} placeholder="역명, 계량기 이름, 고객번호, 사업소" autoComplete="off" />
         </label>
-        <p className="form-hint">{billingOnly
-          ? "머리글에서 역명·최근 청구월·납부금액은 정렬, 호선·영업사업소는 조건을 고를 수 있습니다. 노선도도 같은 조건을 따릅니다."
-          : "머리글에서 역명·사용량·예측 대비·기준일은 정렬, 호선·영업사업소·위험도는 조건을 고를 수 있습니다. 노선도와 우선 확인 대상도 같은 조건을 따릅니다."}</p>
+        <p className="form-hint">{billingOnly ? "노선도도 이 표의 조건을 따릅니다." : "노선도와 우선 확인 대상도 이 표의 조건을 따릅니다."}</p>
         {filtering && <button type="button" className="text-button" onClick={onReset}>조건 초기화</button>}
       </div>
       <div className="table-wrap table-wrap--fixed">

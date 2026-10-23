@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from back.api import catalog, config, db
 from back.api.import_data import upsert_bill_summaries
 from back.pipelines.common import collection_lock, customer_number, merge_csv, today, write_json
-from back.pipelines.daily_water.scraper import FIELDS, fetch_month
+from back.pipelines.daily_water.scraper import FIELDS, fetch_day_statuses, fetch_month, fetch_smart_status
 from back.pipelines.refresh import publish_data
 from back.scripts.billing_etl.crawl_bills import collect_bills
 from back.scripts.billing_etl.i121_crawler.auth import ConfigurationError, CustomerAccessError, LoginError, collection_session, transient
@@ -68,18 +68,20 @@ def _result(status, message, daily_rows=0, bill_rows=0, daily_available=False, v
             "daily_available": daily_available, "connection_verified": verified, "retryable": retryable}
 
 
-def collect_meter(meter, *, progress=None, session=None):
+def collect_meter(meter, *, progress=None, session=None, status_only=False):
     """A failure affects this contract only; successful source rows remain usable."""
     if meter.get("provider") != "arisu":
         return _result("failed", "현재 아리수 고객번호의 자동 조회만 지원합니다.")
     if not meter.get("active", True) or meter.get("deleted_at"):
         return _result("failed", "비활성 또는 삭제된 계약은 조회하지 않습니다.")
+    if status_only and not meter.get('daily_enabled'):
+        return _result("skipped", "일일 수집이 꺼진 계량기는 아리수 상태를 확인하지 않습니다.")
     try:
         cid = customer_number(meter["customer_number"])
     except (KeyError, ValueError):
         return _result("failed", "고객번호 형식을 확인해 주세요.")
     notify = progress or (lambda message: None)
-    notify("빠진 기간을 확인하는 중입니다.")
+    notify("아리수 누수위험과 계량기 상태를 확인하는 중입니다." if status_only else "빠진 기간을 확인하는 중입니다.")
     owns_session = session is None
     with collection_lock(config.DATA_DIR):
         try:
@@ -93,7 +95,8 @@ def collect_meter(meter, *, progress=None, session=None):
             logger.warning("Arisu session setup failed (%s)", type(exc).__name__)
             return _result("failed", "아리수에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.", retryable=transient(exc))
         try:
-            return _collect(meter | {"customer_number": cid}, session, notify)
+            collect = _collect_status if status_only else _collect
+            return collect(meter | {"customer_number": cid}, session, notify)
         except Exception as exc:
             # Exception text can contain a remote URL or credentials. Log types only.
             logger.error("Unexpected incremental collection failure (%s)", type(exc).__name__)
@@ -101,6 +104,29 @@ def collect_meter(meter, *, progress=None, session=None):
         finally:
             if owns_session:
                 session.close()
+
+
+def _collect_status(meter, session, notify):
+    """0/12/18 o'clock: Arisu leak risk and meter status only. Usage, bills and the model stay with the 08:00 run."""
+    runtime, cid = config.DATA_DIR, meter['customer_number']
+    failures = []
+    try:
+        write_json(runtime / 'arisu' / f'{cid}.json', fetch_smart_status(session, meter))
+    except Exception as exc:
+        logger.warning('Smart card check failed (%s)', type(exc).__name__)
+        failures.append(('누수위험', exc))
+    try:
+        fetch_day_statuses(session, meter, archive_dir=runtime / 'raw/remote_meter')
+    except Exception as exc:
+        logger.warning('Meter status check failed (%s)', type(exc).__name__)
+        failures.append(('계량기 상태', exc))
+    verified = len(failures) < 2
+    message = (', '.join(label for label, _ in failures) + ' 조회에 실패했습니다. 기존 자료는 그대로입니다.' if failures
+               else '아리수 누수위험과 계량기 상태를 확인했습니다.')
+    login_error = getattr(session, 'arisu_login_error', None)
+    login_rejected = isinstance(login_error, str) and not transient(login_error)
+    return _result('partial' if failures and verified else 'failed' if failures else 'success', message,
+                   verified=verified, retryable=not login_rejected and any(transient(exc) for _, exc in failures))
 
 
 def _collect(meter, session, notify):
@@ -153,12 +179,22 @@ def _collect(meter, session, notify):
         months = []
     else:
         months = water_months(observations, end, checked) if daily_enabled else []
+    if daily_enabled and not (isinstance(allowed, frozenset) and cid not in allowed):
+        notify("아리수 누수위험과 계량기 상태를 조회하는 중입니다.")
+        try:
+            smart = fetch_smart_status(session, meter)
+            if smart is not None:
+                write_json(runtime / "arisu" / f"{cid}.json", smart)
+        except Exception as exc:
+            logger.warning("Smart meter query failed (%s)", type(exc).__name__)
+            # Status only: a failed card never fails, retries or mails the day's usage and bill collection.
+            notes.append("아리수 누수위험을 확인하지 못했습니다")
     gaps = []   # days the source itself left without a usable value
     for month in months:
         notify(f"{month} 일일 사용량을 조회하는 중입니다.")
         try:
             issues = []
-            rows = fetch_month(session, meter, month, issues=issues)
+            rows = fetch_month(session, meter, month, issues=issues, archive_dir=runtime / "raw" / "remote_meter")
             for row in rows:
                 observed = date.fromisoformat(row["사용일"])
                 value = float(str(row["일사용량(톤)"]).replace(",", ""))

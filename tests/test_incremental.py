@@ -37,8 +37,11 @@ class IncrementalTest(unittest.TestCase):
             self.meter = catalog.list_meters(conn)[0]
         self.session = patch.object(inc, 'collection_session', return_value=Mock())
         self.session.start()
+        self.smart = patch.object(inc, 'fetch_smart_status', return_value=None)
+        self.smart.start()
 
     def tearDown(self):
+        self.smart.stop()
         self.session.stop()
         self.clock.stop()
         self.config.stop()
@@ -50,6 +53,36 @@ class IncrementalTest(unittest.TestCase):
     def bill(self):
         return {'mkey': '000000001', 'napgi': '2026-06-30', 'napgi_compact': '20260630',
                 'gubun': '정기분', 'total_usage_ton': 12, 'bugwa_amount_won': 500, 'address': '서울 가역'}
+
+    def test_smart_status_updates_without_changing_model_observations(self):
+        smart = {'customer_number': '000000001', 'leak_status': '주의', 'meter_status': '계량기 장애',
+                 'realtime_usage': 0, 'updated_at': '2026-06-03 00:00', 'collected_at': '2026-06-03T08:00:00+09:00'}
+        with patch.object(inc, 'fetch_smart_status', return_value=smart), \
+                patch.object(inc, 'fetch_month', return_value=[]) as fetch, \
+                patch.object(inc, 'collect_bills', return_value={'rows': [], 'errors': []}):
+            result = inc.collect_meter(self.meter)
+        self.assertEqual(result['status'], 'empty')   # the card alone is not a usage or bill result
+        self.assertEqual(catalog.payload()['arisu']['meter'], smart)
+        self.assertEqual(catalog.data_sources()[0], {})
+        self.assertFalse((config.DATA_DIR / 'snapshot/manifest.json').exists())
+        self.assertEqual(fetch.call_args.kwargs['archive_dir'], config.DATA_DIR / 'raw/remote_meter')
+        before = (config.DATA_DIR / 'arisu/000000001.json').read_bytes()
+        with patch.object(inc, 'fetch_smart_status', side_effect=TimeoutError), \
+                patch.object(inc, 'fetch_month', return_value=[self.row()]), \
+                patch.object(inc, 'collect_bills', return_value={'rows': [], 'errors': []}):
+            result = inc.collect_meter(self.meter)
+        # A failed card is a note: it never fails, retries or mails the daily usage and bill run.
+        self.assertEqual(result['status'], 'success')
+        self.assertFalse(result['retryable'])
+        self.assertIn('아리수 누수위험을 확인하지 못했습니다', result['message'])
+        self.assertEqual((config.DATA_DIR / 'arisu/000000001.json').read_bytes(), before)
+        self.assertEqual(catalog.data_sources()[0]['000000001']['usage'], [{'date': '2026-06-01', 'value': 10.0}])
+
+    def test_unlisted_customer_does_not_fetch_smart_status(self):
+        with patch.object(inc, 'fetch_smart_status') as smart, \
+                patch.object(inc, 'collect_bills', return_value={'rows': [], 'errors': []}):
+            inc.collect_meter(self.meter, session=Mock(arisu_customer_numbers=frozenset({'000000002'})))
+        smart.assert_not_called()
 
     def test_new_daily_enabled_meter_is_probed_published_and_repeated_safely(self):
         messages = []

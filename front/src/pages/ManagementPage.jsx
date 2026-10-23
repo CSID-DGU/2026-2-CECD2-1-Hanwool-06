@@ -157,8 +157,7 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
       {!isUsers && <div className="management-tabs" role="group" aria-label="계량기 보관 상태"><button aria-pressed={!showDeleted} onClick={() => setShowDeleted(false)}>등록 계량기</button><button aria-pressed={showDeleted} onClick={() => setShowDeleted(true)}>삭제 보관함</button>{showDeleted && <p>복원하면 다시 관제와 수집 대상이 됩니다.</p>}</div>}
       <div className="table-toolbar">
         <label className="form-field table-search">{isUsers ? "이름·이메일 검색" : "역명·고객번호·사업소 검색"}<input type="search" value={search} onChange={(e) => setSearch(e.target.value)} autoComplete="off" /></label>
-        <p className="form-hint" aria-live="polite">{filtering ? `${records.length}${unit} (전체 ${total}${unit} 중)` : `${total}${unit}`}. {isUsers ? "머리글에서 이름·최근 로그인은 정렬, 역할·담당 사업소·상태는 조건을 고를 수 있습니다."
-          : `머리글에서 역·고객번호${showDeleted ? "·삭제 일시" : ""}는 정렬, 호선·사업소·제공 자료${showDeleted ? "" : "·수집 상태·상태"}는 조건을 고를 수 있습니다.`}</p>
+        <p className="form-hint" aria-live="polite">{filtering ? `${records.length}${unit} (전체 ${total}${unit} 중)` : `${total}${unit}`}</p>
         {filtering && <button type="button" className="text-button" onClick={resetTable}>조건 초기화</button>}
       </div>
       <div className="table-wrap table-wrap--fixed"><table className={`data-table data-table--controls ${isUsers ? "user-admin-table" : "meter-admin-table"}`}><caption className="sr-only">{isUsers ? "사용자 목록" : "계량기 목록"}</caption>

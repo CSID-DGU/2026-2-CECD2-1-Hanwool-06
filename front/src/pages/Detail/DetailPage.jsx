@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { buildStations, CONTRACT_NOTE, CONTRACT_TAG, latestDate, kdate, ton, won, detailHref, isDetailDate, signedPct, CHART_COLORS, SEVERITY_TONE } from "./data.js";
+import { buildStations, CONTRACT_NOTE, CONTRACT_TAG, latestDate, kdate, ton, won, detailHref, isDetailDate, signedPct, CHART_COLORS, SEVERITY_TONE, arisuNow } from "./data.js";
 import { Card, EmptyNote, Stat } from "./ui";
 import LineChart from "./LineChart";
 import RiskCalendar from "./RiskCalendar";
@@ -22,6 +22,7 @@ export default function DetailPage({ data, hash, collection }) {
   if (!station) return <main className="management-page"><h1>{meterId ? "계량기를 찾을 수 없습니다" : "등록된 계량기가 없습니다"}</h1>
     <p>{meterId ? "비활성 계량기이거나 조회 권한이 없는 계량기입니다." : "계량기 관리에서 먼저 등록하세요."}</p><a className="secondary-button" href="#/meters">계량기 관리로 이동</a></main>;
   const line = station.lines.find((l) => l.meterId === meterId) || station.lines.find((l) => l.risk) || station.lines[0];
+  const arisu = data.arisu?.[line.meterId];
   const officeId = String(line.office_id || "");
   const officeStations = stations.filter((s) => s.lines.some((l) => String(l.office_id || "") === officeId));
   const selectMeter = (record) => { window.location.hash = detailHref(record.meterId).slice(1); };
@@ -52,12 +53,13 @@ export default function DetailPage({ data, hash, collection }) {
     {params.has("date") && !requestedDate && <p className="data-notice" role="status">조회 날짜가 올바르지 않아 최신 자료를 표시합니다. 날짜는 YYYY-MM-DD 형식으로 입력해 주세요.</p>}
     {riskNote?.reason ? <StallNotice note={riskNote} meterNumber={line.계량기번호} />
       : !requestedDate && (stale || line.riskError) && <p className="data-notice" role="status">{line.riskError ? "최근 관측값에 오류가 있어 위험도를 새로 계산하지 못했습니다." : "이 계량기의 위험도는 최신 분석일보다 오래된 자료입니다."}{line.risk ? ` 아래 위험도는 ${line.risk.기준일} 기준입니다.` : ""}</p>}
+    {arisu && <ArisuCard arisu={arisu} />}
     {!billingOnly && <div className="dt-cols">
       {line.dataMode === "daily"
         ? <DailyPanel key={`daily-${line.meterId}-${requestedDate}`} usage={line.daily} ridership={line.ridership} latest={latest} requestedDate={requestedDate} />
         : <Card title="일일 사용량"><EmptyNote>아직 수집된 일일 사용량이 없습니다. 첫 자료가 들어오면 여기에 표시됩니다.</EmptyNote></Card>}
       {/* 같은 줄의 두 카드는 key가 서로 달라야 한다. 같으면 계량기를 바꿀 때 지난 카드가 남아 쌓인다. */}
-      {(line.dataMode === "daily" || requestedDate) && (line.riskDays.length || requestedDate ? <RiskPanel key={`risk-${line.meterId}-${requestedDate}`} line={line} requestedDate={requestedDate} /> : <Card title="위험도"><EmptyNote>{line.historyShort ? "분석 대기(학습 데이터 부족): 모델이 배울 과거 자료가 90일에 못 미쳐 아직 판정하지 않습니다." : "아직 위험도 분석 결과가 없습니다."}</EmptyNote></Card>)}
+      {(line.dataMode === "daily" || requestedDate) && (line.riskDays.length || requestedDate ? <RiskPanel key={`risk-${line.meterId}-${requestedDate}`} line={line} requestedDate={requestedDate} readings={arisu?.readings} latestRisk={data.status?.latest_risk} /> : <Card title="위험도"><EmptyNote>{line.historyShort ? "분석 대기(학습 데이터 부족): 모델이 배울 과거 자료가 90일에 못 미쳐 아직 판정하지 않습니다." : "아직 위험도 분석 결과가 없습니다."}</EmptyNote></Card>)}
     </div>}
     <Card title="청구서">
       <Bill key={line.meterId} station={viewStation} line={line} />
@@ -104,11 +106,26 @@ function StationHeader({ station, line, selectMeter, requestedDate, dateRisk }) 
   </section>;
 }
 
+// 아리수가 판정한 누수위험·실시간 사용량·계량기 상태. 고른 날짜와 상관없는 지금 상태라 위험도 카드와 따로 두고,
+// 몇 시 기준인지와 언제 확인했는지 적는다. 계량기 상태는 마지막 검침이 카드보다 오래됐을 때만 따로 시각을 붙인다.
+function ArisuCard({ arisu }) {
+  const now = arisuNow(arisu);
+  const status = (value) => <span className={`dt-arisu-value is-${value.tone}`}>{value.text}</span>;
+  return <Card title="아리수 원격검침(실시간)" right={[now.cardAt && `${now.cardAt} 기준`, now.checkedAt && `${now.checkedAt} 확인`].filter(Boolean).join(", ")}>
+    <dl className="dt-risk-stats dt-arisu-stats">
+      <Stat label="누수위험" value={status(now.leak)} />
+      <Stat label="실시간 사용량" value={now.usage === null ? "—" : `${ton(now.usage)} 톤`} />
+      <Stat label="계량기 상태" value={<>{status(now.meter)}{now.meterAt && now.meterAt !== now.cardAt && <small>{now.meterAt} 기준</small>}</>} />
+    </dl>
+  </Card>;
+}
+
 // 위험도: 달력에서 고른 날(처음에는 마지막 판정일)의 수치를 보여 준다.
-function RiskPanel({ line, requestedDate }) {
+function RiskPanel({ line, requestedDate, readings = [], latestRisk }) {
   const days = line.riskDays;
   const [selected, setSelected] = useState(requestedDate || days.at(-1)?.date || "");
   const day = days.find((d) => d.date === selected);
+  const reading = readings.find((r) => r.date === selected);
   const note = day?.note;
   const msg = note?.reason === "값 그대로"
     ? `원격검침 값이 그대로라(0톤) 판정하지 않았습니다. ${kdate(note.since)}부터 ${note.days}일째, 멈추기 전 평소 하루 ${ton(note.usual)}톤.`
@@ -129,9 +146,10 @@ function RiskPanel({ line, requestedDate }) {
         <Stat label="오차" value={Number.isFinite(day.error) ? `${day.error > 0 ? "+" : ""}${ton(day.error)} 톤` : "—"} />
         <Stat label="예측 대비" value={signedPct(day.pct, "비율 없음")} />
       </dl>
-      </> : <EmptyNote>{selected}에는 위험도 분석 결과가 없습니다.</EmptyNote>}
-      <RiskCalendar days={days} selected={selected} onSelect={setSelected} />
-      <p className="form-hint">달력에서 날짜를 누르면 그날 수치를 봅니다. 위험도는 예측 오차를 이 계량기의 최근 사용량과 평소 변동 폭에 견줘 정합니다.</p>
+      </> : <EmptyNote>{latestRisk && selected > latestRisk ? "아직 판정 전입니다." : `${selected}에는 위험도 분석 결과가 없습니다.`}</EmptyNote>}
+      {reading?.status && reading.status !== "정상" && <p className="dt-risk-reading">계량기 상태: {reading.status}</p>}
+      <RiskCalendar days={days} readings={readings} selected={selected} onSelect={setSelected} />
+      <p className="form-hint">위험도는 매일 08시 수집이 끝나면 전날 사용량으로 판정합니다.</p>
     </Card>
   );
 }
