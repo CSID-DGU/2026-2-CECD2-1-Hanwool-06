@@ -3,7 +3,7 @@
 This directory contains the active pipelines. Retired collectors, ETL scripts and
 saved experiments are catalogued in [`archive/README.md`](../../archive/README.md).
 Archived files are not runtime inputs. The initial risk dataset is maintained at
-`data/app_seed/risk/test_anomalies.csv`; new model results belong to `APP_DATA_DIR/model`.
+`APP_DATA_DIR/history/app_seed/risk/test_anomalies.csv`; new model results belong to `APP_DATA_DIR/model`.
 
 All collection uses registered contracts from the application database. Archived and
 inactive contracts are excluded. The API's incremental worker probes both daily readings
@@ -52,7 +52,7 @@ API uploads one SQLite backup per day after the automatic run settles (`back/sto
 The ridership API serves only the most recent week. Older dates come from the Seoul Open
 Data monthly files (OA-12914, no key): `python -m back.pipelines.daily_ridership.monthly
 2026-05 2026-08`. It writes the same per-date files and applies the station/line rule of
-the historical `data/processed/ridership.csv`, so the series continues without a break.
+the historical `APP_DATA_DIR/history/processed/ridership.csv`, so the series continues without a break.
 
 ```sh
 python -m pip install -r back/api/requirements.txt -r back/pipelines/requirements.txt
@@ -91,7 +91,7 @@ the web interface; queued jobs persist across restarts.
 
 Historical `data/processed` observations are reused. The recovered ridership file
 includes all 80 reviewed contracts. Old water CSV aliases are resolved through the
-reviewed `data/billing/meter_match.csv`; new data carries its customer number directly.
+reviewed `APP_DATA_DIR/history/billing/meter_match.csv`; new data carries its customer number directly.
 The historical water file's `검침일` is the reading date: Arisu records a day's use on the next day, so it is moved
 back one day to the usage day (`사용일`) that keys collected water files, ridership and the calendar.
 Unknown aliases fail validation rather than being guessed. Calendar coverage is
@@ -167,4 +167,4 @@ python -m back.pipelines.refresh --model                                        
 python -m back.pipelines.refresh --model --train-end 2026-04-30 --valid-end 2026-08-31     # 분할 경계를 새로 정할 때
 ```
 
-결과와 오류는 `APP_DATA_DIR/refresh_report.json`에 남습니다. 모델 자료 구성에는 `APP_DATA_DIR/history/`의 이력 자료가 필요합니다([`../../data/README.md`](../../data/README.md)).
+결과와 오류는 `APP_DATA_DIR/refresh_report.json`에 남습니다. 모델 자료 구성에는 `APP_DATA_DIR/history/`의 이력 자료가 필요합니다([`../storage/README.md`](../storage/README.md)).

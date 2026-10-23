@@ -7,7 +7,7 @@
 집계: 응답은 일자×시간×권종×사용자구분별 승차(rideNope)/하차(gffNope) → 역·호선별 전부 합산.
 매칭: API stnNm 은 부역명 '(...)' 을 달고 '역' 이 없으므로 등록된 계약의 역명과 정규화해 맞춘다.
       환승역은 호선별(모델 역명이 base+호선숫자). 검토 매핑(meter_match.csv)에 호선이 비어 있는 계량기는
-      기존 정제 자료(data/processed/ridership.csv)와 같이 같은 이름의 역 전체 합계를 쓴다.
+      기존 정제 자료(history/processed/ridership.csv)와 같이 같은 이름의 역 전체 합계를 쓴다.
       월별 파일 수집(monthly.py)도 이 기준을 그대로 쓴다: 같은 고객·날짜에 쓰므로 기준이 하나여야 한다.
 """
 from __future__ import annotations

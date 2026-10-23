@@ -5,7 +5,7 @@
 
     python -m back.pipelines.daily_ridership.monthly 2026-05 2026-08
 
-집계 기준은 scraper.py 와 같다(같은 원천으로 만든 data/processed/ridership.csv 의 기준): 검토 매핑에
+집계 기준은 scraper.py 와 같다(같은 원천으로 만든 history/processed/ridership.csv 의 기준): 검토 매핑에
 호선이 비어 있는 계량기는 같은 이름의 역 전체 합계를, 호선이 있는 계량기와 새 계량기는 그 호선만 쓴다.
 """
 from __future__ import annotations

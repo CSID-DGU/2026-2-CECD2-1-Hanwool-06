@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: No data files in the repository
+        run: '! git ls-files -- data | grep .'
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'

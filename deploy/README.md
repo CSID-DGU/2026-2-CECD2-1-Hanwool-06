@@ -17,7 +17,7 @@ NCP 운영 서버(`water-prod`, Ubuntu 24.04)에 실제로 깔려 있는 설정 
 
 | 바뀐 파일 | 반영 방법 |
 |---|---|
-| `back/`, `data/` 등 코드·자료 | `water-monitor` 재시작 → `/api/health` 확인 |
+| `back/` 등 코드 | `water-monitor` 재시작 → `/api/health` 확인 |
 | `requirements*.txt`, `back/**/requirements.txt`, `environment.yml` | 위에 더해 `pip install -r requirements-dev.txt` |
 | `front/`, `package.json`, `package-lock.json` | `npm ci` → 새 폴더(`front/dist.next`)에 빌드 → `front/dist`와 바꿔 끼움. 재시작 없이 바로 보임 |
 | `*.md`, `docs/`, `tests/`, `.github/` | 받기만 함 |

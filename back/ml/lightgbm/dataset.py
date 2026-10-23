@@ -135,7 +135,7 @@ def _load_splits(cfg: dict) -> pd.DataFrame:
 
 
 def _merge_calendar(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """date_index.csv 를 붙여 달력 정보(월/요일/주말/공휴일/휴무일/징검다리)를 추가한다."""
+    """달력 파일(refresh.build_calendar가 holidays 패키지로 만든 calendar.csv)을 붙여 달력 정보(월/요일/주말/공휴일/휴무일/징검다리)를 추가한다."""
     cal = pd.read_csv(cfg["data"]["calendar"], encoding="utf-8-sig", parse_dates=["날짜"])
     cal = cal[["날짜", "월", "요일_숫자", "주말", "공휴일", "휴무일", "징검다리"]]
     out = df.merge(cal, on="날짜", how="left")

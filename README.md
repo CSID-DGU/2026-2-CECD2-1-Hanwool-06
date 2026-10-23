@@ -22,7 +22,6 @@ React/Vite 화면, FastAPI API, SQLite DB, LightGBM 모델로 이루어져 있�
 | `back/storage/` | NCP Object Storage 보관과 복원 |
 | `deploy/` | 운영 서버 설정(systemd, nginx)과 자동 배포 |
 | `docs/` | 운영 담당자 문서 |
-| `data/` | 달력 자료. 고객번호와 사용량이 든 이력 자료는 저장소에 두지 않습니다 |
 
 ## 실행
 
@@ -53,5 +52,5 @@ npm test
 - 수집과 모델 갱신: [`back/pipelines/README.md`](back/pipelines/README.md), [`back/ml/README.md`](back/ml/README.md)
 - Object Storage 보관과 복원: [`back/storage/README.md`](back/storage/README.md), [`docs/ncp-object-storage-handoff.md`](docs/ncp-object-storage-handoff.md)
 - 물샘이 채팅: [`docs/chat-agent.md`](docs/chat-agent.md)
-- 자료 폴더와 이력 자료 위치: [`data/README.md`](data/README.md)
+- 이력 자료의 위치와 구조: [`back/storage/README.md`](back/storage/README.md)
 - 운영 설정과 관리 명령(DB 백업, 비밀번호 재설정): [`back/README.md`](back/README.md)

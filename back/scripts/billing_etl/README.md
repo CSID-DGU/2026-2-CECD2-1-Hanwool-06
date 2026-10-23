@@ -6,4 +6,4 @@
 
 수집 결과·캐시는 `APP_DATA_DIR/raw/billing_i121/`에 저장합니다. 기본 경로는 `data/runtime/raw/billing_i121/`이며, 웹 수집은 상세를 운영 DB에도 반영합니다. 관리 명령은 `python -m back.pipelines.refresh --bills`를 사용하세요.
 
-예전 일회성 후처리 도구 `postprocess_bills.py`는 [`archive/back/scripts/billing_etl/`](../../../archive/back/scripts/billing_etl/)에 보관했습니다. `data/billing/`은 과거 정제 청구 자료와 현재 재사용하는 계량기 매핑을 유지합니다.
+예전 일회성 후처리 도구 `postprocess_bills.py`는 [`archive/back/scripts/billing_etl/`](../../../archive/back/scripts/billing_etl/)에 보관했습니다. 이력 폴더 `APP_DATA_DIR/history/billing/`에 과거 정제 청구 자료와 현재 재사용하는 계량기 매핑이 있습니다.

@@ -42,7 +42,7 @@ NCP Object Storage(S3 호환 API)에 `APP_DATA_DIR`의 장기 보관 파일을 �
 | 승하차 월별 원본 | `raw/ridership_monthly/` | ✓ | |
 | 모델 입력 | `dataset/` | ✓ | train/valid 분할 경계가 여기 남음 |
 | 가공 자료 | `processed/` | ✓ | |
-| 이력 자료 | `history/` | ✓ | 모델 학습 이력(`processed/`), 계량기 매핑(`billing/`), 초기 자료(`app_seed/`), 옛 수집 폴더(`daily/`). 저장소에 두지 않아 버킷이 원본 |
+| 이력 자료 | `history/` | ✓ | 모델 학습 이력(`processed/`), 계량기 매핑(`billing/`), 초기 자료(`app_seed/`), 옛 통합 자료(`ml_dataset/`), 옛 수집 폴더(`daily/`). 저장소에 두지 않아 버킷이 원본(아래 '이력 자료 구조') |
 | 모델 결과 | `model/` | ✓ | `model.txt`, `test_anomalies.csv`, `metrics.json` 등 |
 | 스냅샷 | `snapshot/manifest.json`, manifest가 가리키는 `snapshot/versions/<id>/` | ✓ | 화면이 읽는 daily.json·risk.json |
 | 지난 스냅샷 버전 | 그 밖의 `snapshot/versions/<id>/` | ✗ | 자료가 바뀔 때마다 전체를 다시 묶은 사본(버전마다 약 31MB, 서버에서는 하루 뒤 지워짐). 스냅샷이 바뀐 동기화에서, 지금 버전이 버킷에 그대로 있는지(크기·sha256) 확인한 뒤 버킷의 지난 버전도 지운다. `manifest.json`은 그 버전을 다 올린 뒤 마지막에 올린다 |
@@ -98,3 +98,23 @@ python -m back.api.manage backup /private/backup/water.sqlite3 --upload   # 기�
 ## 테스트
 
 `python -m unittest tests.test_storage` — 가짜 S3 클라이언트로 키 배치, 동기화 멱등성, 실패 격리, DB 백업·정리, 복원, 마이그레이션 검증을 확인합니다. 실제 버킷 연결은 서버 구축 뒤 `status`·`migrate --dry-run`으로 확인합니다.
+
+## 이력 자료(`history/`) 구조
+
+고객번호·역명·사용량·승하차·청구 이력이 든 자료는 저장소에 두지 않습니다. 운영 자료 폴더의 `history/`(`APP_DATA_DIR/history`, `APP_HISTORY_DIR`로 바꿀 수 있음)에 두면 `sync`가 `<prefix>/history/`에 올리고 `restore`가 되살립니다. 폴더 구조는 저장소에 자료가 있던 때의 `data/`와 같습니다. 등록부와 청구서는 운영 DB와 03:30 백업 버킷에만 있습니다.
+
+| 경로 | 내용 | 읽는 곳 |
+|---|---|---|
+| `history/processed/daily_water_usage.csv` | 고객번호, 역명, 검침일, 일사용량_톤. 검침일 D의 값은 D-1에 쓴 물이라 읽을 때 하루 당긴다 | 모델 자료 구성(`refresh.build_dataset`), 화면 예비 자료 |
+| `history/processed/ridership.csv` | 고객번호, 역명, 사용일, 승차·하차 총승객수 | 같음 |
+| `history/processed/water_bills.csv` | 격월 청구 집계(고객번호, 역명, 시작·종료연월, 사용량, 부과금액). 수집된 청구서가 없을 때의 모델 기준값 | `refresh --model` |
+| `history/ml_dataset/master.csv` | 옛 통합 자료(고객번호, 역명, 날짜, 사용량, 승하차). 운영 스냅샷이 없을 때 화면이 읽는 예비 자료 | 화면 예비 자료 |
+| `history/billing/bills_clean.csv` | 정기분 청구서 통합 이력(고객번호, 역명, 영업사업소, 용도, 납기일, 총사용량_톤, 부과금액_원). 성명 열 없음 | `refresh.build_model_bills` |
+| `history/billing/meter_match.csv` | 고객번호 ↔ 일일CSV파일명·역명·호선·용도 매핑(80행). 호선이 빈 계량기는 같은 이름 역 전체 합계를 쓴다 | 승하차 수집, 모델 자료 구성, 등록부 초기 적재 |
+| `history/billing/mkey_station_map.csv` | 계량기 검토 메모 | 등록부 초기 적재 |
+| `history/app_seed/bills.json`, `stations.json`, `locations.json`, `station_positions.json` | 고객번호별 청구 이력·역명·사업소·호선, 계량기 좌표, 역 노선도 위치 | 등록부 초기 적재, 매 시작 때 비어 있는 역 위치 채움 |
+| `history/app_seed/details_long.csv`, `meter_collection.csv` | 계량기 상세와 수집 설정 초기값 | 등록부 초기 적재 |
+| `history/app_seed/risk/test_anomalies.csv` | 초기 위험도 자료. 운영 스냅샷이 게시되면 쓰지 않는다 | 화면 예비 자료 |
+| `history/daily/` | 서버의 옛 수집 폴더(수집기가 쓰기 전 자료) | 모델 자료 구성 |
+
+로컬에서 모델을 돌리거나 등록부를 채우려면 이 폴더가 필요합니다. 버킷에서 받으려면 읽기 키로 `OBJECT_STORAGE_ENABLED=true OBJECT_STORAGE_BUCKET=hanwool-data OBJECT_STORAGE_PREFIX=prod OBJECT_STORAGE_ACCESS_KEY=… OBJECT_STORAGE_SECRET_KEY=… python -m back.storage restore data/runtime`을 실행합니다(이미 있는 파일은 덮어쓰지 않음). 없으면 화면은 스냅샷만 보여 주고, `refresh --model`은 이력이 없다는 오류로 멈추며, 등록부 초기 적재는 자료가 생긴 다음 시작 때 이루어집니다.

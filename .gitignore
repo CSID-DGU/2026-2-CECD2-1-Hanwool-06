@@ -63,35 +63,23 @@ ehthumbs.db
 *.orig
 *.rej
 
-# Project-local data files (optional; uncomment if data should not be tracked)
-# data/
+# 자료 폴더는 통째로 올리지 않는다. 운영 자료(APP_DATA_DIR, 기본값 data/runtime)와
+# 고객번호·역명·사용량이 든 이력 자료(data/runtime/history)는 서버와 Object Storage에만 둔다. CI도 data/ 아래 추적 파일이 없는지 확인한다
+/data/
 
 # 과거 공개 스냅샷 (현재 데이터는 인증된 API에서 제공)
 front/public/risk.json
 front/public/daily.json
 
 # 아리수 원본 엑셀 (용량 크고 재생성 가능)
-data/arisu_station_history/raw/
 /archive/data/arisu_station_history/raw/
 
-Claude.md
-
-# Private runtime: users, sessions, collected files, model outputs and snapshots
-/data/runtime/
-# 고객번호·역명·사용량이 든 이력 자료는 저장소에 두지 않는다(APP_DATA_DIR/history와 Object Storage history/). 달력(date_index.csv)만 남긴다
-/data/app_seed/
-/data/billing/
-/data/ml_dataset/
-/data/processed/*
-!/data/processed/README.md
-!/data/processed/date_index.csv
 # 자료가 통째로 들어간 정적 화면 저장본
 /front/dist-static/
 *.sqlite3-wal
 *.sqlite3-shm
 /test-results/
-# 서버의 옛 수집 폴더(운영 자료라 올리지 않음)와 자동 배포가 화면 빌드를 바꿔 끼울 때 쓰는 폴더
-/data/daily/
+# 자동 배포가 화면 빌드를 바꿔 끼울 때 쓰는 폴더
 /front/dist.next/
 /front/dist.prev/
 /front/dist.failed/

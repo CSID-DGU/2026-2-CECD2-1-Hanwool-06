@@ -31,7 +31,6 @@ SMTP_PASS = os.getenv('SMTP_PASS', '')
 ALERT_FROM = os.getenv('ALERT_FROM', '') or SMTP_USER
 TODAY_OVERRIDE = os.getenv('TODAY_OVERRIDE', '').strip()
 COLLECTION_WORKER_ENABLED = os.getenv('COLLECTION_WORKER_ENABLED', 'true').lower() == 'true'
-DATE_INDEX = ROOT / 'data/processed/date_index.csv'
 # NCP Object Storage(S3 호환). 끄면(기본) 모든 보관 훅은 아무 일도 하지 않는다. 값은 환경변수로만 주고 코드에 적지 않는다.
 OBJECT_STORAGE_ENABLED = os.getenv('OBJECT_STORAGE_ENABLED', 'false').lower() == 'true'
 OBJECT_STORAGE_ENDPOINT = os.getenv('OBJECT_STORAGE_ENDPOINT', 'https://kr.object.ncloudstorage.com').strip()

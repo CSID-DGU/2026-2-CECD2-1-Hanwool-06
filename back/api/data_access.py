@@ -1,5 +1,6 @@
 """Use the same private snapshot and registry as the dashboard, scoped before analysis."""
 from datetime import date as Date, timedelta
+from functools import lru_cache
 from statistics import median
 from back.pipelines.common import today
 from . import catalog, config, db
@@ -20,14 +21,17 @@ def reference_date(office_ids=None):
     return max(dates, default=today().isoformat())
 
 
+@lru_cache(maxsize=None)
+def _holidays(year):
+    import holidays   # 모델 달력(refresh.build_calendar)과 같은 출처. 저장소에 달력 파일을 두지 않는다
+    return holidays.KR(years=[year], language='ko')
+
+
 def calendar_info(date):
     day = Date.fromisoformat(date)
-    result = {'weekend': day.weekday() >= 5, 'holiday': None, 'holiday_name': '', '요일': '월화수목금토일'[day.weekday()]}
-    for row in catalog.read_csv(config.DATE_INDEX):
-        if row.get('날짜') == date:
-            result.update(holiday=str(row.get('공휴일')) in ('1', '1.0', 'True'), holiday_name=row.get('공휴일명') or '')
-            break
-    return result
+    name = _holidays(day.year).get(day)
+    return {'weekend': day.weekday() >= 5, 'holiday': name is not None, 'holiday_name': name or '',
+            '요일': '월화수목금토일'[day.weekday()]}
 
 
 def item_from_row(meter, row):
