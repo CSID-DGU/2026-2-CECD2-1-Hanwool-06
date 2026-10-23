@@ -23,7 +23,7 @@
 .management-tabs p { margin: 0 0 0 12px; color: var(--mute); font-size: 13px; }
 /* 계량기 관리 표: 열 폭 고정(조건을 바꿔도 흔들리지 않게), 좁은 창에서는 상자 안에서 가로 스크롤 */
 .meter-admin-table { min-width: 1100px; }
-.user-admin-table { min-width: 760px; }
+.user-admin-table { min-width: 930px; }
 /* "역 / 호선" 머리글: 역 정렬 버튼과 호선 선택을 한 줄에 */
 .th-pair { display: inline-flex; align-items: center; gap: 6px; color: var(--mute); font-size: 12px; }
 th.is-filtered .th-pair .th-dropdown, th.is-filtered .th-pair .th-dropdown .dd-mark { color: var(--brand); }

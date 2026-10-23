@@ -21,9 +21,12 @@ const dataModeLabel = (m) => (m.data_mode === "daily" ? "일일 사용량, 청�
 // 수집 상태 열의 조건 값: 아리수가 아니면 자동 수집 미지원, 수집한 적 없으면 연결 미확인, 그 밖에는 최근 수집 결과.
 const collectKey = (m, state) => (m.provider !== "arisu" ? "자동 수집 미지원" : state ? collectionLabel(state.status) : "연결 미확인");
 const optionsOf = (values) => [...new Set(values.filter(Boolean))].sort(compareText).map((value) => ({ value, label: value }));
-// 사용자 표 정렬: 이름(같으면 이메일 순). 조건: 역할·담당 사업소·상태.
-const USER_SORT_DEFAULTS = { name: "asc" };
-const USER_COLUMNS = { name: { value: (u) => u.name, type: "text" } };
+// 사용자 표 정렬: 이름(같으면 이메일 순), 최근 로그인(처음 누르면 최근 순, 기록 없는 계정은 늘 맨 뒤). 조건: 역할·담당 사업소·상태.
+const USER_SORT_DEFAULTS = { name: "asc", login: "desc" };
+const USER_COLUMNS = {
+  name: { value: (u) => u.name, type: "text" },
+  login: { value: (u) => (u.last_login_at ? Date.parse(u.last_login_at) : null), type: "number" },
+};
 const userOrder = (a, b) => compareText(a.name, b.name) || compareText(a.email, b.email);
 const NO_USER_FILTERS = { role: "all", office: "all", active: "all" };
 const ROLE_LABELS = { office_admin: "사업소 관리자", superadmin: "총괄 관리자" };
@@ -115,7 +118,8 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
   const sortBy = (column) => setMeterSort(nextSortKey(sortKey, column, METER_SORT_DEFAULTS));
   const sortUsersBy = (column) => setUserSort(nextSortKey(userSort, column, USER_SORT_DEFAULTS));
   const resetTable = () => { setSearch(""); setMeterFilters(NO_METER_FILTERS); setMeterSort("name-asc"); setUserFilters(NO_USER_FILTERS); setUserSort("name-asc"); };
-  const DELETED_HINTS = { asc: "오래된 순, 누르면 최근 순", desc: "최근 순, 누르면 오래된 순", idle: "누르면 최근 순" };
+  // 시각 열(삭제 일시, 최근 로그인) 머리글 안내
+  const TIME_HINTS = { asc: "오래된 순, 누르면 최근 순", desc: "최근 순, 누르면 오래된 순", idle: "누르면 최근 순" };
   async function saved(result) {
     setEditor(null); setMessage(result?.created ? "등록했습니다. 아리수 계량기는 곧 연결을 확인합니다." : "저장했습니다."); setRevision((n) => n + 1); onSaved(); collection?.refresh();
   }
@@ -153,16 +157,17 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
       {!isUsers && <div className="management-tabs" role="group" aria-label="계량기 보관 상태"><button aria-pressed={!showDeleted} onClick={() => setShowDeleted(false)}>등록 계량기</button><button aria-pressed={showDeleted} onClick={() => setShowDeleted(true)}>삭제 보관함</button>{showDeleted && <p>복원하면 다시 관제와 수집 대상이 됩니다.</p>}</div>}
       <div className="table-toolbar">
         <label className="form-field table-search">{isUsers ? "이름·이메일 검색" : "역명·고객번호·사업소 검색"}<input type="search" value={search} onChange={(e) => setSearch(e.target.value)} autoComplete="off" /></label>
-        <p className="form-hint" aria-live="polite">{filtering ? `${records.length}${unit} (전체 ${total}${unit} 중)` : `${total}${unit}`}. {isUsers ? "머리글에서 이름은 정렬, 역할·담당 사업소·상태는 조건을 고를 수 있습니다."
+        <p className="form-hint" aria-live="polite">{filtering ? `${records.length}${unit} (전체 ${total}${unit} 중)` : `${total}${unit}`}. {isUsers ? "머리글에서 이름·최근 로그인은 정렬, 역할·담당 사업소·상태는 조건을 고를 수 있습니다."
           : `머리글에서 역·고객번호${showDeleted ? "·삭제 일시" : ""}는 정렬, 호선·사업소·제공 자료${showDeleted ? "" : "·수집 상태·상태"}는 조건을 고를 수 있습니다.`}</p>
         {filtering && <button type="button" className="text-button" onClick={resetTable}>조건 초기화</button>}
       </div>
       <div className="table-wrap table-wrap--fixed"><table className={`data-table data-table--controls ${isUsers ? "user-admin-table" : "meter-admin-table"}`}><caption className="sr-only">{isUsers ? "사용자 목록" : "계량기 목록"}</caption>
-        <colgroup>{(isUsers ? [null, 150, 260, 110, 110] : [null, 180, 150, 140, 210, 90, 230]).map((width, i) => <col key={i} style={width ? { width: `${width}px` } : undefined} />)}</colgroup>
+        <colgroup>{(isUsers ? [null, 150, 260, 170, 110, 110] : [null, 180, 150, 140, 210, 90, 230]).map((width, i) => <col key={i} style={width ? { width: `${width}px` } : undefined} />)}</colgroup>
         <thead><tr>{isUsers ? <>
           <SortHeader column="name" label="이름 / 이메일" sortKey={userSort} onSort={sortUsersBy} />
           <FilterHeader label="역할" value={userFilters.role} items={userChoices.role} onChange={setUserFilter("role")} />
           <FilterHeader label="담당 사업소" value={userFilters.office} items={userChoices.office} onChange={setUserFilter("office")} />
+          <SortHeader column="login" label="최근 로그인" sortKey={userSort} onSort={sortUsersBy} hints={TIME_HINTS} />
           <FilterHeader label="상태" value={userFilters.active} items={userChoices.active} onChange={setUserFilter("active")} />
           <th>관리</th>
         </> : <>
@@ -179,13 +184,13 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
           <SortHeader column="customer" label="계량기 / 고객번호" sortKey={sortKey} onSort={sortBy} />
           <FilterHeader label="사업소" value={meterFilters.office} items={meterChoices.office} onChange={setFilter("office")} />
           <FilterHeader label="제공 자료" value={meterFilters.mode} items={meterChoices.mode} onChange={setFilter("mode")} />
-          {showDeleted ? <SortHeader column="deleted" label="삭제 일시" sortKey={sortKey} onSort={sortBy} hints={DELETED_HINTS} />
+          {showDeleted ? <SortHeader column="deleted" label="삭제 일시" sortKey={sortKey} onSort={sortBy} hints={TIME_HINTS} />
             : <FilterHeader label="수집 상태" value={meterFilters.collect} items={meterChoices.collect} onChange={setFilter("collect")} />}
           {showDeleted ? <th>상태</th> : <FilterHeader label="상태" value={meterFilters.active} items={meterChoices.active} onChange={setFilter("active")} />}
           <th>관리</th>
         </>}</tr></thead>
         <tbody>{records.map((item) => { const state = isUsers ? null : stateOf(item); return <tr key={item.id}>
-          {isUsers ? <><td><strong>{item.name}</strong><small>{item.email}</small></td><td>{item.role === "superadmin" ? "총괄 관리자" : "사업소 관리자"}</td><td>{item.role === "superadmin" ? "전체" : officeNames(item.office_ids)}</td></>
+          {isUsers ? <><td><strong>{item.name}</strong><small>{item.email}</small></td><td>{item.role === "superadmin" ? "총괄 관리자" : "사업소 관리자"}</td><td>{item.role === "superadmin" ? "전체" : officeNames(item.office_ids)}</td><td>{collectionTime(item.last_login_at)}</td></>
           : <><td>{item.deleted_at || !item.active ? <strong>{item.station_name}</strong> : <a className="station-link" href={detailHref(item.id)}>{item.station_name}</a>}{item.line && <small>{item.line}호선</small>}</td><td>{item.display_name || "기본 계량기"}<small>{item.customer_number}</small></td><td>{item.office_name || officeNames([item.office_id])}</td><td>{item.data_mode === "daily" ? "일일 사용량, 청구서" : item.data_mode === "pending" ? "첫 수집 대기" : "청구서"}</td><td className="meter-collection-cell">{item.deleted_at ? <span>삭제 {collectionTime(item.deleted_at)}</span> : <><strong>{meterCollectionState(item, state)}</strong>{item.provider === "arisu" && <><small>최근 성공 {collectionTime(state?.last_success_at)}</small>{state && <details><summary>{collectionLabel(state.status)}</summary><p>최근 시도 {collectionTime(state.last_attempt_at)}{state.message ? `. ${state.message}` : ""}</p></details>}</>}</>}</td></>}
           <td><span className={`status-label ${!item.active || item.deleted_at ? "status-label--off" : ""}`}>{item.deleted_at ? "삭제됨" : !item.active ? "비활성" : "활성"}</span></td>
           <td><div className="table-actions">{item.deleted_at ? <button type="button" className="secondary-button" disabled={actionBusy} onClick={() => changeDeleted(item, false)}>복원</button> : <>

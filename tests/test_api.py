@@ -174,6 +174,24 @@ class ApplicationTest(unittest.TestCase):
         self.create_manager()   # 같은 이메일로 같은 사업소에 다시 등록할 수 있다
         manager.close()
 
+    def test_user_list_shows_latest_successful_login(self):
+        root = self.login()
+        staff = self.create_manager()
+        last_login = lambda: {u['id']: u['last_login_at'] for u in self.client.get('/api/users').json()}
+        self.assertIsNone(last_login()[staff['id']])
+        self.assertIsNotNone(last_login()[root['id']])
+        self.assertEqual(self.client.post('/api/auth/login', json={'email': 'staff@example.com', 'password': 'wrong-password'}).status_code, 401)
+        self.assertIsNone(last_login()[staff['id']])
+        with db.connect() as c:
+            for action, created in [('login', '2026-10-05T01:00:00+00:00'), ('login', '2026-10-01T01:00:00+00:00'), ('meter_update', '2026-10-09T01:00:00+00:00')]:
+                c.execute('INSERT INTO audit_log(actor_id,action,target,created_at) VALUES(?,?,?,?)', (staff['id'], action, '', created))
+        self.assertEqual(last_login()[staff['id']], '2026-10-05T01:00:00+00:00')
+        manager = TestClient(main.app, base_url='http://localhost')
+        self.login(manager, 'staff@example.com', 'ManagerPass!234')
+        self.assertGreater(last_login()[staff['id']], '2026-10-05T01:00:00+00:00')
+        self.assertNotIn('last_login_at', manager.get('/api/auth/me').json()['user'])
+        manager.close()
+
     def test_csrf_password_session_and_login_limit(self):
         self.login()
         csrf = self.client.headers.pop('X-CSRF-Token')

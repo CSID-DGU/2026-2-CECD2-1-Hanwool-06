@@ -391,7 +391,11 @@ def collect(body: CollectionRequest, user=Depends(auth.current_user)):
 @app.get('/api/users')
 def users(user=Depends(auth.superadmin)):
     with db.connect() as c:
-        return [auth.public_user(c, row) for row in c.execute('SELECT * FROM users WHERE deleted_at IS NULL ORDER BY name,id')]
+        # 최근 로그인: 로그인에 성공할 때마다 남기는 감사 기록(login) 중 가장 늦은 시각. 한 번도 없으면 None.
+        # 사용자마다 (actor_id, action) 인덱스로 바로 찾는다. 감사 기록 전체를 훑지 않는다.
+        return [auth.public_user(c, row) | {'last_login_at': row['last_login_at']} for row in c.execute(
+            "SELECT u.*,(SELECT max(created_at) FROM audit_log a WHERE a.actor_id=u.id AND a.action='login') AS last_login_at "
+            'FROM users u WHERE u.deleted_at IS NULL ORDER BY u.name,u.id')]
 
 
 def save_user(body, actor, user_id=None):
