@@ -73,6 +73,8 @@ def init_db():
         ''')
         if 'deleted_at' not in {r['name'] for r in c.execute('PRAGMA table_info(meters)')}:
             c.execute('ALTER TABLE meters ADD COLUMN deleted_at TEXT')
+        if 'deleted_at' not in {r['name'] for r in c.execute('PRAGMA table_info(users)')}:
+            c.execute('ALTER TABLE users ADD COLUMN deleted_at TEXT')
         if 'retryable' not in {r['name'] for r in c.execute('PRAGMA table_info(collection_items)')}:
             c.execute('ALTER TABLE collection_items ADD COLUMN retryable INTEGER NOT NULL DEFAULT 0')
         if 'notice_number' not in {r['name'] for r in c.execute('PRAGMA table_info(bills)')}:

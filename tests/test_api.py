@@ -150,6 +150,30 @@ class ApplicationTest(unittest.TestCase):
         self.assertEqual(manager.get('/api/data').status_code,401)
         manager.close()
 
+    def test_delete_user_keeps_history_and_frees_email(self):
+        root = self.login()
+        staff = self.create_manager()
+        manager = TestClient(main.app, base_url='http://localhost')
+        self.login(manager, 'staff@example.com', 'ManagerPass!234')
+        self.assertEqual(manager.delete(f"/api/users/{staff['id']}").status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/users/{root['id']}").status_code, 409)
+        with db.connect() as c:
+            db.audit(c, staff['id'], 'meter_update', '000000001')
+            c.execute("INSERT INTO chat_conversations(id,user_id,scope_fingerprint,updated_at) VALUES('chat1',?,'x',0)", (staff['id'],))
+        self.assertEqual(self.client.delete(f"/api/users/{staff['id']}").status_code, 200)
+        self.assertEqual(manager.get('/api/data').status_code, 401)
+        self.assertNotIn(staff['id'], [u['id'] for u in self.client.get('/api/users').json()])
+        self.assertEqual(self.client.post('/api/auth/login', json={'email': 'staff@example.com', 'password': 'ManagerPass!234New'}).status_code, 401)
+        with db.connect() as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM audit_log WHERE actor_id=? AND action='meter_update'", (staff['id'],)).fetchone()[0], 1)
+            self.assertIsNone(c.execute('SELECT 1 FROM chat_conversations WHERE user_id=?', (staff['id'],)).fetchone())
+            deleted = json.loads(c.execute("SELECT details FROM audit_log WHERE action='user_delete'").fetchone()[0])
+        self.assertEqual((deleted['email'], deleted['office_ids']), ('staff@example.com', ['동부']))
+        self.assertEqual(self.client.delete(f"/api/users/{staff['id']}").status_code, 404)
+        self.assertEqual(self.client.patch(f"/api/users/{staff['id']}", json={'active': True}).status_code, 404)
+        self.create_manager()   # 같은 이메일로 같은 사업소에 다시 등록할 수 있다
+        manager.close()
+
     def test_csrf_password_session_and_login_limit(self):
         self.login()
         csrf = self.client.headers.pop('X-CSRF-Token')

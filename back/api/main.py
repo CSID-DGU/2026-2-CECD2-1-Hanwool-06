@@ -391,7 +391,7 @@ def collect(body: CollectionRequest, user=Depends(auth.current_user)):
 @app.get('/api/users')
 def users(user=Depends(auth.superadmin)):
     with db.connect() as c:
-        return [auth.public_user(c, row) for row in c.execute('SELECT * FROM users ORDER BY name,id')]
+        return [auth.public_user(c, row) for row in c.execute('SELECT * FROM users WHERE deleted_at IS NULL ORDER BY name,id')]
 
 
 def save_user(body, actor, user_id=None):
@@ -400,7 +400,7 @@ def save_user(body, actor, user_id=None):
     try:
         with db.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            row = c.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone() if user_id else None
+            row = c.execute('SELECT * FROM users WHERE id=? AND deleted_at IS NULL', (user_id,)).fetchone() if user_id else None
             if user_id and row is None:
                 raise HTTPException(404, '사용자를 찾을 수 없습니다.')
             old = auth.public_user(c, row) if row else {}
@@ -460,6 +460,24 @@ def create_user(body: dict = Body(...), user=Depends(auth.superadmin)):
 @app.patch('/api/users/{user_id}')
 def patch_user(user_id: int, body: dict = Body(...), user=Depends(auth.superadmin)):
     return save_user(body, user, user_id)
+
+
+@app.delete('/api/users/{user_id}')
+def delete_user(user_id: int, user=Depends(auth.superadmin)):
+    if user_id == user['id']:
+        raise HTTPException(409, '본인 계정은 삭제할 수 없습니다.')
+    with db.connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row = c.execute('SELECT * FROM users WHERE id=? AND deleted_at IS NULL', (user_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, '사용자를 찾을 수 없습니다.')
+        old = auth.public_user(c, row)
+        # 활동 기록(audit_log·수집 작업)이 이 사용자를 가리키므로 행은 남긴다. 같은 이메일로 다시 등록할 수 있게 이메일은 비운다.
+        c.execute('UPDATE users SET email=?,active=0,deleted_at=? WHERE id=?', (f'deleted-{user_id}@deleted.invalid', db.now(), user_id))
+        for table in ('sessions', 'office_members', 'chat_conversations'):
+            c.execute(f'DELETE FROM {table} WHERE user_id=?', (user_id,))
+        db.audit(c, user['id'], 'user_delete', user_id, {k: old[k] for k in ('email', 'name', 'role', 'office_ids')})
+    return {'ok': True}
 
 
 def checked_date(value):

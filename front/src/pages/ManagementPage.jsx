@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { deleteMeter, getMeters, getUsers, restoreMeter, saveMeter, saveUser } from "../api.js";
+import { deleteMeter, deleteUser, getMeters, getUsers, restoreMeter, saveMeter, saveUser } from "../api.js";
 import { detailHref } from "./Detail/data.js";
 import CollectionPanel from "../components/CollectionPanel.jsx";
 import PasswordField from "../components/PasswordField.jsx";
@@ -76,6 +76,8 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
   ).toLowerCase().includes(search.trim().toLowerCase()));
   const offices = data.offices || [];
   const officeNames = (ids = []) => ids.map((id) => offices.find((o) => String(o.id) === String(id))?.name || "미지정").join(", ");
+  // 삭제 확인 문구의 "누구": 총괄 관리자, 또는 "모란영업사업소 관리자"처럼 담당 사업소를 붙인다.
+  const userTitle = (u) => (u.role === "superadmin" ? "총괄 관리자" : u.office_ids?.length ? `${officeNames(u.office_ids)} 관리자` : "사업소 관리자");
   // 계량기 표의 머리글 조건과 정렬(전체 현황 계량기 목록과 같은 방식). 선택지는 이 표에 실제로 있는 값만.
   const stateOf = (item) => collection?.data?.meters?.find((m) => String(m.meter_id) === String(item.id));
   const officeLabel = (item) => item.office_name || officeNames([item.office_id]);
@@ -131,6 +133,15 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
     } catch (e) { setError(e.message); }
     finally { setActionBusy(false); }
   }
+  async function removeUser(item) {
+    setActionBusy(true); setError("");
+    try {
+      await deleteUser(item.id);
+      setDeleting(null); setRevision((n) => n + 1);
+      setMessage(`${userTitle(item)} ${item.name}님을 삭제했습니다.`);
+    } catch (e) { setError(e.message); }
+    finally { setActionBusy(false); }
+  }
   return <main className="management-page">
     <div className="management-heading"><div><h1>{isUsers ? "사용자 관리" : "계량기 관리"}</h1>
       {isUsers && <p>사업소마다 활성 담당자를 2명까지 둘 수 있습니다.</p>}</div>
@@ -179,6 +190,7 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
           <td><span className={`status-label ${!item.active || item.deleted_at ? "status-label--off" : ""}`}>{item.deleted_at ? "삭제됨" : !item.active ? "비활성" : "활성"}</span></td>
           <td><div className="table-actions">{item.deleted_at ? <button type="button" className="secondary-button" disabled={actionBusy} onClick={() => changeDeleted(item, false)}>복원</button> : <>
             <button type="button" className="secondary-button" onClick={() => setEditor(item)} aria-label={`${item.name || item.station_name} 수정`}>수정</button>
+            {isUsers && <button type="button" className="text-button danger-text" disabled={actionBusy || item.id === user.id} title={item.id === user.id ? "본인 계정은 삭제할 수 없습니다." : undefined} onClick={() => { setError(""); setDeleting(item); }} aria-label={`${item.name} 삭제`}>삭제</button>}
             {!isUsers && <><button type="button" className="secondary-button" disabled={collection?.busy || isCollectionActive(state) || !item.active || item.provider !== "arisu"} onClick={() => updateMeter(item)}>{isCollectionActive(state) ? collectionLabel(state.status) : "정보 업데이트"}</button><button type="button" className="text-button danger-text" disabled={actionBusy} onClick={() => { setError(""); setDeleting(item); }} aria-label={`${item.station_name} ${item.customer_number} 삭제`}>삭제</button></>}
           </>}</div></td>
         </tr>; })}</tbody>
@@ -190,7 +202,8 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
     {editor && <EditorDialog key={`${kind}-${editor.id || "new"}`} title={`${isUsers ? "사용자" : "계량기"} ${editor.id ? "수정" : "추가"}`} onClose={() => setEditor(null)}>
       {isUsers ? <UserForm item={editor} offices={offices} onSaved={saved} /> : <MeterForm item={editor} data={data} onSaved={saved} canPosition={user.role === "superadmin"} onExisting={(item) => { setEditor(null); if (item.deleted_at) changeDeleted(item, false); else if (item.active && item.provider === "arisu") updateMeter(item); else setEditor(item); }} />}
     </EditorDialog>}
-    {deleting && <EditorDialog title="계량기 삭제" onClose={() => { if (!actionBusy) setDeleting(null); }}><div className="editor-form"><p><strong>{deleting.station_name}{deleting.line ? ` ${deleting.line}호선` : ""}</strong><br />{deleting.display_name}<br />고객번호 {deleting.customer_number}</p><p className="form-hint">관제 목록과 수집 대상에서 빠집니다. 청구·사용량 이력은 남아 있어 삭제 보관함에서 복원할 수 있습니다.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><button className="secondary-button" disabled={actionBusy} onClick={() => setDeleting(null)}>취소</button><button className="danger-button" disabled={actionBusy} onClick={() => changeDeleted(deleting, true)}>{actionBusy ? "삭제 중…" : "삭제"}</button></div></div></EditorDialog>}
+    {deleting && isUsers && <EditorDialog title="사용자 삭제" onClose={() => { if (!actionBusy) setDeleting(null); }}><div className="editor-form"><p><strong>{userTitle(deleting)} {deleting.name}님을 삭제하시겠습니까?</strong><br />{deleting.email}</p><p className="form-hint">삭제하면 바로 로그아웃되고 다시 로그인할 수 없습니다. 사용자 목록에서 사라지며 되돌릴 수 없습니다. 활동 기록은 남습니다.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><button className="secondary-button" disabled={actionBusy} onClick={() => setDeleting(null)}>취소</button><button className="danger-button" disabled={actionBusy} onClick={() => removeUser(deleting)}>{actionBusy ? "삭제 중…" : "삭제"}</button></div></div></EditorDialog>}
+    {deleting && !isUsers && <EditorDialog title="계량기 삭제" onClose={() => { if (!actionBusy) setDeleting(null); }}><div className="editor-form"><p><strong>{deleting.station_name}{deleting.line ? ` ${deleting.line}호선` : ""}</strong><br />{deleting.display_name}<br />고객번호 {deleting.customer_number}</p><p className="form-hint">관제 목록과 수집 대상에서 빠집니다. 청구·사용량 이력은 남아 있어 삭제 보관함에서 복원할 수 있습니다.</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><button className="secondary-button" disabled={actionBusy} onClick={() => setDeleting(null)}>취소</button><button className="danger-button" disabled={actionBusy} onClick={() => changeDeleted(deleting, true)}>{actionBusy ? "삭제 중…" : "삭제"}</button></div></div></EditorDialog>}
   </main>;
 }
 

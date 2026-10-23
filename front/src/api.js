@@ -69,6 +69,7 @@ export const getData = (version) => request(`/data${version ? `?version=${encode
 export const getUsers = () => request("/users");
 export const getMeters = (includeDeleted = false) => request(`/meters${includeDeleted ? "?include_deleted=true" : ""}`);
 export const saveUser = (id, body) => request(`/users${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PATCH" : "POST", body });
+export const deleteUser = (id) => request(`/users/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const saveMeter = (id, body) => request(`/meters${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PATCH" : "POST", body });
 export const deleteMeter = (id) => request(`/meters/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const restoreMeter = (id) => request(`/meters/${encodeURIComponent(id)}/restore`, { method: "POST" });
