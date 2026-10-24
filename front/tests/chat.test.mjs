@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
-import { chatDraftReducer, chatSourceHref, chatWebHref } from "../src/chat.js";
-import { getChatStatus, sendChat, setCsrfToken } from "../src/api.js";
+import { chatDraftReducer, chatSourceHref, chatStageText, chatWebHref } from "../src/chat.js";
+import { getChatStatus, setCsrfToken, streamChat } from "../src/api.js";
 import { buildStations, detailHref, isDetailDate } from "../src/pages/Detail/data.js";
 
 test("sending clears the composer immediately and a failed question can be restored and retried", () => {
@@ -54,26 +54,51 @@ test("detail links preserve real calendar dates without changing existing meter 
   assert.equal(isDetailDate("2024-02-29"), true);
 });
 
-test("chat sends only the question and server conversation ID with session CSRF and cancellation", async () => {
+const encoder = new TextEncoder();
+const streamOf = (...chunks) => new ReadableStream({ start(controller) { chunks.forEach((chunk) => controller.enqueue(chunk)); controller.close(); } });
+const sse = (...events) => encoder.encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
+
+test("chat streams fixed progress stages, then the checked answer, with session CSRF and cancellation", async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
-  const response = { conversation_id: "saved-conversation", answer: "확인할 역을 알려 주세요.", sources: [] };
+  const result = { type: "result", conversation_id: "saved-conversation", answer: "확인할 역을 알려 주세요.", sources: [] };
+  // 사건이 조각나 오고, 한글 글자가 바이트 중간에서 잘려도 그대로 읽는다
+  const bytes = sse({ type: "progress", stage: "classify" }, { type: "progress", stage: "web" }, result);
+  const pieces = [bytes.slice(0, 7), bytes.slice(7, 61), bytes.slice(61, bytes.length - 3), bytes.slice(bytes.length - 3)];
   try {
-    globalThis.fetch = async (path, options) => { calls.push({ path, ...options }); return { ok: true, status: 200, json: async () => response }; };
+    globalThis.fetch = async (path, options) => { calls.push({ path, ...options }); return { ok: true, status: 200, body: streamOf(...pieces) }; };
     setCsrfToken("chat-csrf");
     const controller = new AbortController();
-    assert.equal(await sendChat("지난달은요?", "previous-conversation", controller.signal), response);
-    await sendChat("오늘 현황을 알려 주세요");
-    assert.equal(calls[0].path, "/api/chat");
+    const stages = [];
+    assert.deepEqual(await streamChat("지난달은요?", "previous-conversation", { signal: controller.signal, onProgress: (stage) => stages.push(stage) }), result);
+    assert.deepEqual(stages, ["classify", "web"]);
+    await streamChat("오늘 현황을 알려 주세요");
+    assert.equal(calls[0].path, "/api/chat/stream");
     assert.equal(calls[0].method, "POST");
     assert.equal(calls[0].credentials, "same-origin");
     assert.equal(calls[0].headers["X-CSRF-Token"], "chat-csrf");
     assert.equal(calls[0].signal, controller.signal);
     assert.deepEqual(JSON.parse(calls[0].body), { message: "지난달은요?", conversation_id: "previous-conversation" });
     assert.deepEqual(JSON.parse(calls[1].body), { message: "오늘 현황을 알려 주세요", conversation_id: null });
+    // 대화 한도 같은 오류는 스트림 안에서 상태와 함께 온다
+    globalThis.fetch = async () => ({ ok: true, status: 200, body: streamOf(sse({ type: "error", status: 429, detail: "대화는 계정당 한 시간에 20회까지 요청할 수 있습니다." })) });
+    await assert.rejects(streamChat("다시 조회"), (error) => error.status === 429 && error.message.startsWith("대화는 계정당"));
+    // 스트림을 열기 전의 오류는 평소처럼 읽는다
     globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({ detail: "자료 저장소에 연결하지 못했습니다." }) });
-    await assert.rejects(sendChat("다시 조회"), (error) => error.status === 503 && error.message === "자료 저장소에 연결하지 못했습니다.");
+    await assert.rejects(streamChat("다시 조회"), (error) => error.status === 503 && error.message === "자료 저장소에 연결하지 못했습니다.");
+    // 답 없이 끊기거나 형식이 깨지면 다시 시도하라고 알린다
+    globalThis.fetch = async () => ({ ok: true, status: 200, body: streamOf(sse({ type: "progress", stage: "data" })) });
+    await assert.rejects(streamChat("다시 조회"), /끝까지 받지 못했습니다/);
+    globalThis.fetch = async () => ({ ok: true, status: 200, body: streamOf(encoder.encode("data: {broken\n\n")) });
+    await assert.rejects(streamChat("다시 조회"), /형식을 확인하지 못했습니다/);
   } finally { globalThis.fetch = originalFetch; setCsrfToken(); }
+});
+
+test("chat stage codes map only to fixed Korean labels", () => {
+  assert.equal(chatStageText("classify"), "질문 해석 중…");
+  assert.equal(chatStageText("web"), "웹 검색 중…");
+  assert.equal(chatStageText("compare"), "자료 비교·답변 구성 중…");
+  for (const stage of [null, undefined, "constructor", "__proto__", "<b>"]) assert.equal(chatStageText(stage), "질문 보내는 중…");
 });
 
 test("chat connection checks use a cancellable authenticated GET and preserve inactive responses", async () => {

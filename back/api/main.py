@@ -1,5 +1,6 @@
 """Private water-monitoring API and production SPA entry point."""
 import json
+import queue
 import re
 import secrets
 import sqlite3
@@ -12,7 +13,7 @@ from urllib.parse import quote
 from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -548,11 +549,50 @@ def chat_status(user=Depends(auth.current_user)):
     return {'active': chat_agent.connection_active()}
 
 
-@app.post('/api/chat')
-def chat(body: Chat, user=Depends(auth.current_user)):
+def chat_message(body: Chat):
     if not body.message.strip() or any(ord(char) < 32 and char not in '\n\r\t' for char in body.message):
         raise HTTPException(422, '질문은 공백을 제외한 1~2000자로 입력하세요.')
-    return chat_agent.chat(body.message.strip(), body.conversation_id, user['id'])
+    return body.message.strip()
+
+
+@app.post('/api/chat')
+def chat(body: Chat, user=Depends(auth.current_user)):
+    return chat_agent.chat(chat_message(body), body.conversation_id, user['id'])
+
+
+@app.post('/api/chat/stream')
+def chat_stream(body: Chat, user=Depends(auth.current_user)):
+    """진행 단계(서버가 정한 코드)를 먼저 흘려보내고, 마지막에 검증을 마친 답이나 오류를 보낸다(text/event-stream).
+
+    모델이 쓰는 문장은 검증 전에는 보내지 않는다. 인증·입력 오류는 스트림을 열기 전에 평소처럼 응답한다.
+    gzip은 이 형식을 압축하지 않고, X-Accel-Buffering으로 nginx가 모아 보내지 않게 한다.
+    """
+    message = chat_message(body)
+    events = queue.Queue()
+
+    def run():
+        try:
+            result = chat_agent.chat(message, body.conversation_id, user['id'],
+                                     progress=lambda stage: events.put({'type': 'progress', 'stage': stage}))
+            events.put({**result, 'type': 'result'})
+        except HTTPException as exc:
+            events.put({'type': 'error', 'status': exc.status_code, 'detail': exc.detail})
+        except Exception:   # chat()이 이미 502로 바꾸지만, 스레드 밖으로 새지 않게 한 번 더 막는다
+            events.put({'type': 'error', 'status': 502, 'detail': '대화 서비스에서 확인된 답을 받지 못했습니다. 잠시 후 다시 시도하세요.'})
+
+    threading.Thread(target=run, daemon=True).start()
+
+    def stream():
+        while True:
+            try:
+                event = events.get(timeout=chat_agent.MAX_SECONDS + 30)
+            except queue.Empty:
+                event = {'type': 'error', 'status': 504, 'detail': '답변 작성 시간이 초과되었습니다. 범위를 좁혀 다시 질문하세요.'}
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if event['type'] != 'progress':
+                return
+
+    return StreamingResponse(stream(), media_type='text/event-stream', headers={'X-Accel-Buffering': 'no'})
 
 
 @app.post('/api/alert')

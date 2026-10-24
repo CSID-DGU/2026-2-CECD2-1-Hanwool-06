@@ -44,20 +44,60 @@ export async function request(path, { method = "GET", body, responseType = "json
       if (response.ok) throw new Error("서버 응답 형식이 올바르지 않습니다. API 경로를 확인하세요.");
       return null;
     });
-  if (!response.ok) {
-    if (response.status === 401 && path !== "/auth/login") {
-      csrfToken = "";
-      window.dispatchEvent(new Event("session-expired"));
-    }
-    const detail = data?.detail;
-    const message = typeof detail === "string" ? detail : Array.isArray(detail)
-      ? detail.map((x) => `${x.loc?.slice(1).join(".") || "입력"}: ${x.msg}`).join(" · ")
-      : `요청을 완료하지 못했습니다 (${response.status}).`;
-    const error = new Error(message);
-    error.status = response.status;
-    throw error;
-  }
+  if (!response.ok) throw failure(response.status, path, data);
   return data;
+}
+function failure(status, path, data) {
+  if (status === 401 && path !== "/auth/login") {
+    csrfToken = "";
+    window.dispatchEvent(new Event("session-expired"));
+  }
+  const detail = data?.detail;
+  const message = typeof detail === "string" ? detail : Array.isArray(detail)
+    ? detail.map((x) => `${x.loc?.slice(1).join(".") || "입력"}: ${x.msg}`).join(" · ")
+    : `요청을 완료하지 못했습니다 (${status}).`;
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+// 물샘이 스트림(text/event-stream)을 읽는다. 진행 단계(progress)는 onProgress로 넘기고, 답(result)이나 오류(error) 사건을 돌려준다.
+export async function readChatStream(body, onProgress) {
+  if (!body?.getReader) throw new Error("답변을 받지 못했습니다. 다시 시도해 주세요.");
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    let end;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const data = buffer.slice(0, end).split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+      buffer = buffer.slice(end + 2);
+      if (!data) continue;
+      let event;
+      try { event = JSON.parse(data); } catch { throw new Error("답변 형식을 확인하지 못했습니다. 다시 시도해 주세요."); }
+      if (event?.type === "progress") onProgress?.(event.stage);
+      else if (event?.type === "result" || event?.type === "error") {
+        reader.cancel().catch(() => {});
+        return event;
+      }
+    }
+    if (done) throw new Error("답변을 끝까지 받지 못했습니다. 다시 시도해 주세요.");
+  }
+}
+// 물샘이 답변: 서버가 보내는 진행 단계를 onProgress로 알리고, 마지막에 검증을 마친 답을 돌려준다.
+export async function streamChat(message, conversationId = null, { signal, onProgress } = {}) {
+  if (isStatic) refuse("저장된 화면에서는 제공하지 않습니다.", 404);
+  const path = "/chat/stream";
+  const response = await fetch(`/api${path}`, {
+    method: "POST", credentials: "same-origin", cache: "no-store", signal,
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ message, conversation_id: conversationId }),
+  });
+  if (!response.ok) throw failure(response.status, path, await response.json().catch(() => null));
+  const event = await readChatStream(response.body, onProgress);
+  if (event.type === "error") throw failure(event.status, path, { detail: event.detail });
+  return event;
 }
 export const getHealth = () => request("/health");
 export const getMe = () => request("/auth/me");
@@ -77,7 +117,6 @@ export const getCollection = () => request("/collection");
 export const startCollection = (meter_id) => request("/collection", { method: "POST", body: meter_id ? { meter_id } : {} });
 export const getSummary = (date) => request(`/summary?${new URLSearchParams(date ? { date } : {})}`);
 export const getChatStatus = (signal) => request("/chat/status", { signal });
-export const sendChat = (message, conversationId = null, signal) => request("/chat", { method: "POST", body: { message, conversation_id: conversationId }, signal });
 export const analyzeCause = (meter_id, date) => request("/analyze", { method: "POST", body: { meter_id, date } });
 export const sendAlert = (meter_id, date) => request("/alert", { method: "POST", body: { meter_id, date } });
 export const pdfUrl = (id, download = false) => `/api/bills/${encodeURIComponent(id)}/pdf?download=${download}`;

@@ -912,8 +912,18 @@ def _repair_note(exc):
     return '직전 답변은 서버 검증을 통과하지 못했다. ' + reason + ' 근거가 없는 내용은 빼고 다시 답한다.'
 
 
-def _run(client, message, conversation, deadline):
+# 화면에 보여 줄 진행 단계. 서버가 정한 코드만 보내고, 모델이 쓰는 문장은 검증을 마친 최종 답 전에는 보내지 않는다.
+TOOL_STAGES = {'resolve_station': 'station', 'get_station_status': 'data', 'get_station_history': 'data', 'find_anomalies': 'data',
+               'get_arisu_status': 'arisu', 'search_manuals': 'docs', 'search_similar_cases': 'docs', 'search_local_events': 'web'}
+
+
+def _no_progress(stage):
+    pass
+
+
+def _run(client, message, conversation, deadline, progress=_no_progress):
     _check_scope(conversation)
+    progress('classify')
     route = _classify(client, message, conversation, deadline)
     if route.domain == 'OUT_OF_SCOPE':
         return _result(OUTSIDE, route), conversation['context']
@@ -969,6 +979,8 @@ def _run(client, message, conversation, deadline):
         'station은 분류된 역명 또는 resolve_station의 정식 역명, meter_ref는 도구가 준 별칭만 쓴다. date=null은 최신 원격 자료를 조회한다. '
         '과거 역과 날짜는 후속 질문에만 유지한다. '
         '아리수 원격검침(실시간) 질문(아리수 누수위험·실시간 사용량·계량기 상태·통신 장애·계량기 장애)은 get_arisu_status를 쓴다. '
+        'get_arisu_status가 arisu_unavailable(아리수 자료 없음)이면 멈추지 말고 get_station_status·find_anomalies 같은 LightGBM 조회로 '
+        '답할 수 있는 만큼 답하고, 아리수 원격검침 자료는 아직 없어 확인하지 못했다고 한 줄 밝힌다. '
         '아리수 누수위험은 아리수 자체 표시값이며 LightGBM 위험도 판정과 다르다. 둘을 섞지 않고, 아리수 값은 항상 "아리수 누수위험 주의", '
         '"계량기 상태 정상"처럼 쓰며 arisu_card_updated_at을 "몇 시 기준"으로 함께 쓴다. '
         '아리수 건수는 아리수 집계를 인용해 "아리수 누수위험 주의 ○곳"처럼 leak_status_counts(계량기 수)와 match_count를 그대로 쓴다. '
@@ -1008,6 +1020,7 @@ def _run(client, message, conversation, deadline):
     for round_index in range(MAX_ROUNDS):
         _check_scope(conversation)
         choice = {'tool_choice': 'required'} if calls == 0 else {}
+        progress('plan' if calls == 0 else 'compare')   # 처음엔 조회할 자료를 고르고, 그 뒤로는 받은 자료를 맞춰 보며 답을 쓴다
         response = _create(client, deadline, schema=Answer, name='water_answer', instructions=instructions,
                            input=inputs, tools=list(schemas.values()), parallel_tool_calls=False, **choice)
         # 추론 항목을 포함한 전체 output을 되돌려야 stateless Responses 호출이 이어진다.
@@ -1029,6 +1042,7 @@ def _run(client, message, conversation, deadline):
                 if not repaired and round_index < MAX_ROUNDS - 1 and primary_ids & delivered_ids and deadline - time.monotonic() > 15:
                     repaired = True
                     inputs.append({'role': 'developer', 'content': _repair_note(exc)})
+                    progress('repair')
                     continue
                 # 문장 생성만 실패했을 때는 이미 전달된 실제 조회 요약까지 숨기지 않는다.
                 sources = [source for source in kit.sources if source['id'] in primary_ids & delivered_ids
@@ -1073,6 +1087,7 @@ def _run(client, message, conversation, deadline):
                             raise ValueError('Tool range differs from requested range')
                 if name in ARISU_TOOLS:
                     _check_arisu_range(route, args)
+                progress(TOOL_STAGES.get(name, 'data'))   # 검사를 통과한 조회만 단계로 알린다
                 result = kit.execute(name, args)
                 if name == 'resolve_station' and not result.get('ambiguous') and group is not None:
                     for match in result.get('matches', []):
@@ -1124,7 +1139,8 @@ def _run(client, message, conversation, deadline):
     return _result(answer, route), kit.context
 
 
-def chat(message, conversation_id, user_id):
+def chat(message, conversation_id, user_id, progress=_no_progress):
+    """progress(stage)는 진행 단계 코드(TOOL_STAGES의 값, classify·plan·compare·repair)를 받는다."""
     deadline = time.monotonic() + MAX_SECONDS
     conversation = _acquire(user_id, conversation_id)
     try:
@@ -1132,7 +1148,7 @@ def chat(message, conversation_id, user_id):
             raise HTTPException(503, '대화 서비스가 아직 설정되지 않았습니다.')
         client = OpenAI(api_key=config.OPENAI_API_KEY, timeout=MAX_SECONDS, max_retries=0)
         try:
-            result, context = _run(client, message, conversation, deadline)
+            result, context = _run(client, message, conversation, deadline, progress)
         finally:
             client.close()
         _remaining(deadline)

@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
-import { getChatStatus, sendChat } from "../api.js";
-import { chatDraftReducer, chatSourceHref, chatWebHref } from "../chat.js";
+import { getChatStatus, streamChat } from "../api.js";
+import { chatDraftReducer, chatSourceHref, chatStageText, chatWebHref } from "../chat.js";
 import mulsaemi from "../assets/mulsaemi/mulsaemi.webp";
 import mulsaemiProfile from "../assets/mulsaemi/mulsaemi-profile.webp";
 import "./agent-chat.css";
@@ -29,6 +29,7 @@ export default function AgentChat() {
   const [draft, updateDraft] = useReducer(chatDraftReducer, "");
   const [pendingQuestion, setPendingQuestion] = useState("");
   const [sending, setSending] = useState(false);
+  const [stage, setStage] = useState(null);
   const [error, setError] = useState("");
   const [apiActive, setApiActive] = useState(null);
   const launcher = useRef(null);
@@ -84,9 +85,11 @@ export default function AgentChat() {
     const controller = new AbortController();
     request.current = controller;
     updateDraft({ type: "send", question, retry });
-    setSending(true); setError(""); setPendingQuestion(question);
+    setSending(true); setStage(null); setError(""); setPendingQuestion(question);
     try {
-      const result = await sendChat(question, conversationId, controller.signal);
+      const result = await streamChat(question, conversationId, {
+        signal: controller.signal, onProgress: (next) => { if (!controller.signal.aborted) setStage(next); },
+      });
       if (controller.signal.aborted) return;
       if (typeof result?.conversation_id !== "string" || !result.conversation_id || typeof result.answer !== "string" || !result.answer.trim() || !Array.isArray(result.sources)) {
         throw new Error("답변 형식을 확인하지 못했습니다. 다시 시도해 주세요.");
@@ -134,7 +137,7 @@ export default function AgentChat() {
           {message.role === "assistant" && <Sources sources={message.sources} onNavigate={navigateToSource} />}
         </article>)}
         {pendingQuestion && <article className="chat-message is-user" aria-label="내 질문"><span className="chat-speaker">나</span><div className="chat-message-body">{pendingQuestion}</div></article>}
-        {sending && <p className="chat-loading" role="status"><span aria-hidden="true" />자료를 확인하고 있습니다…</p>}
+        {sending && <p className="chat-loading" role="status"><span aria-hidden="true" />{chatStageText(stage)}</p>}
         {error && <div className="chat-error"><p role="alert">{error}</p><button type="button" className="text-button" onClick={(event) => submit(event, true)} disabled={sending || !pendingQuestion}>다시 시도</button><span>실패한 질문을 다시 보내거나 새 질문을 입력하세요.</span></div>}
       </div>
       <form className="chat-composer" onSubmit={submit}>

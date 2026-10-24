@@ -8,11 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from back.api import chat_agent, config, data_access, db
+from back.api import chat_agent, collection, config, data_access, db
 from back.pipelines.common import write_json
 from back.pipelines.daily_water.smart_meter import write_arisu_index
 from back.rag import storage as storage_module
-from back.rag.tools import ChatTools
+from back.rag.tools import TOOL_SCHEMAS, ChatTools
 from test_chat_agent import answer, response, route, tool
 from test_chat_storage import encoded, make_store
 
@@ -159,6 +159,20 @@ class ArisuToolTest(unittest.TestCase):
 
 
 class ArisuIndexTest(unittest.TestCase):
+    def test_missing_chat_index_is_built_and_uploaded_when_the_worker_starts(self):
+        # 배포 직후처럼 색인이 없으면 다음 상태 확인(최대 6시간 뒤)을 기다리지 않고 받아 둔 카드로 바로 만든다
+        with tempfile.TemporaryDirectory() as folder, patch.object(config, 'DATA_DIR', Path(folder)), \
+                patch('back.storage.hooks.sync_now') as sync:
+            root = Path(folder)
+            collection.ensure_arisu_index()   # 카드가 하나도 없으면 빈 색인을 만들지 않는다
+            self.assertFalse((root / 'arisu/index.json').exists())
+            write_json(root / 'arisu/000000001.json', {'customer_number': '000000001', 'leak_status': '주의'})
+            collection.ensure_arisu_index()
+            self.assertEqual(json.loads((root / 'arisu/index.json').read_text(encoding='utf-8'))['meters']['000000001']['leak_status'], '주의')
+            sync.assert_called_once()
+            collection.ensure_arisu_index()   # 이미 있으면 다시 만들지 않는다(수집 작업이 끝날 때마다 새로 쓴다)
+            sync.assert_called_once()
+
     def test_index_keeps_matching_cards_and_about_three_months_of_readings(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -558,6 +572,15 @@ class ArisuLoopTest(unittest.TestCase):
                 result = self.run_agent(text)
                 self.assertEqual(result['generated_by'] != 'none', accepted)
 
+    def test_missing_arisu_data_still_lets_the_lightgbm_lookup_answer(self):
+        missing = {'error': 'NCP에 아리수 원격검침 자료가 아직 없습니다.', 'code': 'arisu_unavailable'}
+        self.kit.execute = Mock(side_effect=[missing, {'meters': [self.kit.evidence['s1'] | {'source_id': 's1'}]}])
+        arisu = tool('get_arisu_status', {'meter_ref': None, 'station': '동부역', 'line': None, 'start_date': None, 'end_date': None})
+        self.responses = [response(route(date=None)), response(output=[arisu]), response(output=[tool(call_id='call_2')]), response(answer())]
+        result = self.run_agent('동부역 최근 통신 장애 있었어?')
+        self.assertEqual(result['generated_by'], chat_agent.config.OPENAI_MODEL)   # 정해진 '아리수 자료 없음' 안내로 끝나지 않는다
+        self.assertIn('arisu_unavailable', self.sent[1]['instructions'])
+
     def test_web_search_date_without_a_requested_day_stays_in_the_recent_week_of_the_lookup(self):
         self.kit.context = {'date': '2026-08-31'}
         for day, allowed in (('2026-08-24', False), ('2026-08-25', True), ('2026-09-01', False), ('2026-08-31', True)):
@@ -581,6 +604,15 @@ class ArisuLoopTest(unittest.TestCase):
             result = self.run_agent('동부역 현황은?')
         self.assertTrue(result['answer'].startswith('답변 문장을 확인하지 못해'))
         self.assertEqual(len(self.sent), 3)
+
+    def test_progress_reports_fixed_stage_codes_in_order(self):
+        stages = []
+        self.responses = [response(route(intent='CAUSE_ANALYSIS', date=None)),
+                          response(output=[tool('search_local_events', {'station': '동부역', 'date': None})]),
+                          response(output=[tool()]), response(answer(source_ids=['s1配'])), response(answer())]
+        chat_agent._run(self.client, '동부역 사용량이 왜 늘었어?', self.conversation, time.monotonic() + 55, stages.append)
+        self.assertEqual(stages, ['classify', 'plan', 'web', 'compare', 'data', 'compare', 'repair', 'compare'])
+        self.assertEqual(set(chat_agent.TOOL_STAGES), {schema['name'] for schema in TOOL_SCHEMAS})   # 새 도구는 단계도 정한다
 
     def test_one_corrected_answer_is_accepted_after_a_rejected_one(self):
         self.responses = [response(route()), response(output=[tool()]), response(answer(source_ids=['s1配'])), response(answer())]

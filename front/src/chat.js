@@ -8,6 +8,20 @@ export function chatDraftReducer(draft, action) {
   return draft;
 }
 
+// 답변을 기다리는 동안 보여 줄 진행 단계 문구. 서버는 단계 코드만 보내고 문구는 화면이 정한다.
+const CHAT_STAGES = {
+  classify: "질문 해석 중…",
+  plan: "답변 준비 중…",
+  station: "역 확인 중…",
+  data: "사용량·판정 자료 검색 중…",
+  arisu: "아리수 원격검침 확인 중…",
+  docs: "점검 문서 검색 중…",
+  web: "웹 검색 중…",
+  compare: "자료 비교·답변 구성 중…",
+  repair: "답변 다시 확인 중…",
+};
+export const chatStageText = (stage) => (typeof stage === "string" && Object.hasOwn(CHAT_STAGES, stage) ? CHAT_STAGES[stage] : "질문 보내는 중…");
+
 // 웹 검색 출처는 따로 연다: 서버가 검색 결과에서 확인한 https 주소(kind "web")만, 계정 정보 없이.
 // 답변 본문의 주소는 여전히 링크로 만들지 않는다.
 export function chatWebHref(source) {

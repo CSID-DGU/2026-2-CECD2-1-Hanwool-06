@@ -331,15 +331,30 @@ def _run_job(job_id, stop, collect_meter):
         if stop.is_set():
             c.execute("UPDATE collection_items SET status='interrupted',message='서버가 중지되었습니다. 정보 업데이트로 다시 시도하세요.',finished_at=? WHERE job_id=? AND status IN ('queued','running')", (db.now(), job_id))
         c.execute('UPDATE collection_jobs SET status=?,finished_at=? WHERE id=?', (state, db.now(), job_id))
-    try:   # the chat reads one Arisu file from Object Storage instead of one per meter
-        from back.pipelines.daily_water.smart_meter import write_arisu_index
-        write_arisu_index(config.DATA_DIR)
-    except Exception as exc:
-        logger.warning('Arisu chat index update failed (%s)', type(exc).__name__)
+    _write_arisu_index()
     if not stop.is_set():
         # Collected files are complete on disk now; copy what changed to Object Storage (no-op when disabled, never raises).
         from back.storage.hooks import after_collection_job
         after_collection_job(job_id)
+
+
+def _write_arisu_index():
+    try:   # the chat reads one Arisu file from Object Storage instead of one per meter
+        from back.pipelines.daily_water.smart_meter import write_arisu_index
+        write_arisu_index(config.DATA_DIR)
+        return True
+    except Exception as exc:
+        logger.warning('Arisu chat index update failed (%s)', type(exc).__name__)
+        return False
+
+
+def ensure_arisu_index():
+    """채팅용 아리수 색인이 없으면(배포 직후, 새 서버) 이미 받은 카드로 바로 만들어 올린다. 다음 상태 확인을 기다리지 않는다."""
+    if (config.DATA_DIR / 'arisu' / 'index.json').exists() or not any((config.DATA_DIR / 'arisu').glob('*.json')):
+        return
+    if _write_arisu_index():
+        from back.storage.hooks import sync_now
+        sync_now(reason='arisu chat index')
 
 
 def worker(stop):
@@ -353,6 +368,7 @@ def worker(stop):
                 stop.wait(2)  # Take over if the API process owning this queue exits.
         else:
             return
+        ensure_arisu_index()
         first_pass = True
         while not stop.is_set():
             try:

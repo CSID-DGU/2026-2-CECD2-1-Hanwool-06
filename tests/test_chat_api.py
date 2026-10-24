@@ -45,13 +45,39 @@ class ChatApiTest(unittest.TestCase):
         self.temp.cleanup()
 
     @staticmethod
-    def answer(client, message, conversation, deadline):
-        return ({'answer': '동부역 기준 자료입니다.', 'sources': [], 'domain': 'IN_SCOPE',
+    def answer(client, message, conversation, deadline, progress=None):
+        if progress:
+            progress('classify')
+            progress('data')
+        return ({'answer': '동부역 기준 자료입니다.' + ' 자세한 내용은 출처를 확인하세요.' * 60, 'sources': [], 'domain': 'IN_SCOPE',
                  'intent': 'STATION_STATUS', 'generated_by': 'none'},
                 {'station': '동부역', 'date': '2026-08-31', 'meters': {'meter_a': 'private-meter'}})
 
     def post(self, message='동부역 현황', conversation_id=None):
         return self.client.post('/api/chat', json={'message': message, 'conversation_id': conversation_id})
+
+    @staticmethod
+    def events(response):
+        return [json.loads(block[len('data: '):]) for block in response.text.split('\n\n') if block.startswith('data: ')]
+
+    def test_stream_sends_fixed_stage_codes_then_the_checked_answer_unbuffered(self):
+        response = self.client.post('/api/chat/stream', json={'message': '동부역 현황'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers['content-type'].startswith('text/event-stream'))
+        self.assertEqual(response.headers['x-accel-buffering'], 'no')   # nginx가 모았다 보내지 않는다
+        self.assertNotIn('content-encoding', response.headers)          # gzip도 모았다 보내지 않는다(답이 1KB를 넘어도)
+        events = self.events(response)
+        self.assertEqual([event['stage'] for event in events[:-1]], ['classify', 'data'])
+        self.assertEqual((events[-1]['type'], len(events[-1]['conversation_id'])), ('result', 32))
+        self.assertTrue(events[-1]['answer'].startswith('동부역 기준 자료입니다.'))
+        self.assertNotIn('private-meter', response.text)
+        # 대화 소유권·한도 같은 오류는 스트림 안에서 상태와 함께 보낸다
+        foreign = self.events(self.client.post('/api/chat/stream', json={'message': '동부역 현황', 'conversation_id': 'f' * 32}))
+        self.assertEqual([(event['type'], event['status']) for event in foreign], [('error', 404)])
+        # 입력·인증 오류는 스트림을 열기 전에 평소처럼 답한다
+        self.assertEqual(self.client.post('/api/chat/stream', json={'message': '   '}).status_code, 422)
+        self.client.headers.pop('X-CSRF-Token')
+        self.assertEqual(self.client.post('/api/chat/stream', json={'message': '동부역 현황'}).status_code, 403)
 
     def test_status_requires_login_and_a_usable_account_before_openai(self):
         self.client.cookies.clear()
