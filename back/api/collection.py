@@ -331,6 +331,11 @@ def _run_job(job_id, stop, collect_meter):
         if stop.is_set():
             c.execute("UPDATE collection_items SET status='interrupted',message='서버가 중지되었습니다. 정보 업데이트로 다시 시도하세요.',finished_at=? WHERE job_id=? AND status IN ('queued','running')", (db.now(), job_id))
         c.execute('UPDATE collection_jobs SET status=?,finished_at=? WHERE id=?', (state, db.now(), job_id))
+    try:   # the chat reads one Arisu file from Object Storage instead of one per meter
+        from back.pipelines.daily_water.smart_meter import write_arisu_index
+        write_arisu_index(config.DATA_DIR)
+    except Exception as exc:
+        logger.warning('Arisu chat index update failed (%s)', type(exc).__name__)
     if not stop.is_set():
         # Collected files are complete on disk now; copy what changed to Object Storage (no-op when disabled, never raises).
         from back.storage.hooks import after_collection_job

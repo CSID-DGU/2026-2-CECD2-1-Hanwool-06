@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
-import { chatDraftReducer, chatSourceHref } from "../src/chat.js";
+import { chatDraftReducer, chatSourceHref, chatWebHref } from "../src/chat.js";
 import { getChatStatus, sendChat, setCsrfToken } from "../src/api.js";
 import { buildStations, detailHref, isDetailDate } from "../src/pages/Detail/data.js";
 
@@ -147,4 +147,16 @@ test("missing dates and error-only dates never fall back to a newer normal analy
   const noAnalysis = detail("2026-09-01", { ...data, risk: {} });
   assert.match(noAnalysis, /2026-09-01에는 위험도 분석 결과가 없습니다/);
   assert.match(noAnalysis, /2026년 9월/);
+});
+
+test("web search sources open only server-checked https addresses, and never through the internal link rule", () => {
+  const web = { id: "s9", kind: "web", label: "단수 안내", url: "https://example.go.kr/notice/1", href: null, meter_id: null, date: null };
+  assert.equal(chatWebHref(web), "https://example.go.kr/notice/1");
+  assert.equal(chatSourceHref(web), null);
+  for (const url of ["http://example.go.kr/a", "javascript:alert(1)", "https://user:pass@example.go.kr/", "//example.go.kr/a",
+    `https://example.go.kr/${"a".repeat(500)}`, "", null]) {
+    assert.equal(chatWebHref({ ...web, url }), null, String(url));
+  }
+  assert.equal(chatWebHref({ ...web, kind: "snapshot" }), null);
+  assert.equal(chatWebHref({ id: "s1", kind: "snapshot", href: "#/detail?meter=a&date=2026-10-23", meter_id: "a", date: "2026-10-23" }), null);
 });

@@ -1,17 +1,58 @@
 """Read the source site's smart-meter card without inferring missing statuses."""
 from __future__ import annotations
 
+import json
 import math
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 
-from back.pipelines.common import customer_number
+from back.pipelines.common import atomic_text, customer_number
 from back.scripts.billing_etl.i121_crawler.auth import (
     MYARISU_URL, LoginError, _looks_like_login_page, ensure_customer_access, update_csrf,
 )
+
+CARD_FIELDS = ('leak_status', 'meter_status', 'realtime_usage', 'updated_at', 'collected_at', 'notice')
+INDEX_READING_DAYS = 92   # the chat index keeps about three months of per-day meter statuses
+
+
+def write_arisu_index(runtime):
+    """One file for the chat (arisu/index.json): every saved card plus recent per-day meter statuses.
+
+    The per-meter files stay the source; a file that cannot be read is left out rather than guessed.
+    """
+    runtime = Path(runtime)
+    meters = {}
+    for path in sorted((runtime / 'arisu').glob('*.json')):
+        if not re.fullmatch(r'\d{9}', path.stem):
+            continue
+        try:
+            card = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        if isinstance(card, dict) and card.get('customer_number') == path.stem:
+            meters[path.stem] = {key: card.get(key) for key in CARD_FIELDS}
+    for path in sorted((runtime / 'raw' / 'remote_meter').glob('*/statuses.json')):
+        cid = path.parent.name
+        try:
+            index = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        if not re.fullmatch(r'\d{9}', cid) or not isinstance(index, dict) or index.get('customer_number') != cid:
+            continue
+        readings = [r for r in index.get('readings') or [] if isinstance(r, dict) and isinstance(r.get('date'), str)
+                    and re.fullmatch(r'\d{4}-\d{2}-\d{2}', r['date'])]
+        if readings:
+            floor = str(date.fromisoformat(max(r['date'] for r in readings)) - timedelta(days=INDEX_READING_DAYS - 1))
+            meters.setdefault(cid, {})['readings'] = [{key: r.get(key) for key in ('date', 'measured_at', 'status')}
+                                                      for r in sorted(readings, key=lambda r: r['date']) if r['date'] >= floor]
+    # 채팅은 이 파일을 4MB까지만 읽으므로 들여쓰기 없이 쓴다(들여쓰면 계량기 하나에 약 11KB).
+    atomic_text(runtime / 'arisu' / 'index.json', json.dumps({
+        'generated_at': datetime.now(ZoneInfo('Asia/Seoul')).isoformat(timespec='seconds'), 'meters': meters},
+        ensure_ascii=False, separators=(',', ':'), allow_nan=False))
 
 
 def _text(element):

@@ -895,7 +895,8 @@ class ApplicationTest(unittest.TestCase):
         self.assertNotIn('000000001', sent)   # customer numbers never leave the application
         sent = json.loads(sent)
         self.assertEqual((len(sent['history']), sent['역'], sent['호선']), (28, '동부역', '2'))
-        self.assertEqual(sent['history'][-1] | {'요일': None}, {'날짜': '2026-08-31', '요일': None, '사용량_톤': 20, '예측_톤': 10.0, '심각도': '경고', '승하차_명': None})
+        self.assertEqual(sent['history'][-1] | {'요일': None}, {'날짜': '2026-08-31', '요일': None, '사용량_톤': 20, '예측_톤': 10.0, '심각도': '경고', '승하차_명': None,
+                                                             '아리수_검침상태': None})
 
     def test_analysis_context_gives_usual_levels_for_the_same_weekday(self):
         from datetime import date as Date, timedelta

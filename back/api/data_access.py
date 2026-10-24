@@ -63,6 +63,20 @@ def find_one(meter_id, date=None, office_ids=None):
     return next((i for i in anomalies_on(date, True, office_ids) if i['meter_id'] == meter_id), None)
 
 
+def _arisu(cid):
+    """Arisu card and per-day meter statuses for cause analysis. Missing or unreadable files give nothing."""
+    try:
+        card = catalog._json(config.DATA_DIR / 'arisu' / f'{cid}.json')
+        index = catalog._json(config.DATA_DIR / 'raw' / 'remote_meter' / cid / 'statuses.json')
+    except (OSError, ValueError):
+        return {}, {}
+    card = card if isinstance(card, dict) and card.get('customer_number') == cid else {}
+    readings = index.get('readings') if isinstance(index, dict) and index.get('customer_number') == cid else None
+    statuses = {r['date']: r.get('status') for r in readings if isinstance(r, dict) and isinstance(r.get('date'), str)} \
+        if isinstance(readings, list) else {}
+    return card, statuses
+
+
 def analysis_context(meter_id, date, office_ids=None, days=28):
     """Recent days and usual levels for cause analysis; the levels are computed here, not by the model."""
     with db.connect() as c:
@@ -80,6 +94,7 @@ def analysis_context(meter_id, date, office_ids=None, days=28):
         day: catalog.number(r.get('actual')) for day, r in scored.items() if catalog.number(r.get('actual')) is not None}
     usage = {day: value for day, value in usage.items() if day not in errors}
     riders = {r['date']: round(r['value']) for r in entry.get('ridership', []) if r['value'] is not None}   # people, not 72326.0
+    card, statuses = _arisu(meter['customer_number'])
     end = Date.fromisoformat(date)
     history = []
     for day in (end - timedelta(days=n) for n in range(days - 1, -1, -1)):
@@ -87,13 +102,17 @@ def analysis_context(meter_id, date, office_ids=None, days=28):
         history.append({'날짜': day.isoformat(), '요일': '월화수목금토일'[day.weekday()], '사용량_톤': usage.get(day.isoformat()),
                         '예측_톤': None if pred is None else round(pred, 1),
                         '심각도': '자료 확인' if day.isoformat() in errors else row.get('severity'),
-                        '승하차_명': riders.get(day.isoformat())})
+                        '승하차_명': riders.get(day.isoformat()),
+                        # 아리수 원문 검침 상태(정상·통신 장애·계량기 장애 등). None은 그날 검침 기록이 없다는 뜻이다.
+                        '아리수_검침상태': statuses.get(day.isoformat())})
 
     def usual(values, digits=1):
         values = [v for v in values if v is not None]
         return round(median(values), digits) if values else None
     weeks = [(end - timedelta(weeks=n)).isoformat() for n in range(1, 9)]
-    return {'역': meter['station_name'], '호선': meter['line'], 'history': history, 'baseline': {
+    arisu = {'누수위험': card.get('leak_status'), '계량기_상태': card.get('meter_status'),
+             '갱신_시각': card.get('updated_at')} if card else None
+    return {'역': meter['station_name'], '호선': meter['line'], 'history': history, 'arisu': arisu, 'baseline': {
         '같은_요일_지난_8주_사용량_중앙값': usual(usage.get(d) for d in weeks),
         '지난_28일_사용량_중앙값': usual(r['사용량_톤'] for r in history[:-1]),
         '같은_요일_지난_8주_승하차_중앙값': usual((riders.get(d) for d in weeks), None),

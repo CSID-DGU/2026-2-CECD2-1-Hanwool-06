@@ -13,7 +13,7 @@ from back.pipelines.common import RUNTIME, collector_meters, customer_number, me
 from back.scripts.billing_etl.i121_crawler.auth import (BASE, session_from_env, _looks_like_login_page,
     LoginError, CustomerAccessError, ensure_customer_access)
 from back.scripts.billing_etl.i121_crawler.fetch import shift_month
-from .smart_meter import fetch_smart_status
+from .smart_meter import fetch_smart_status, write_arisu_index
 
 DAILY_DIR = RUNTIME / "daily" / "water"
 FIELDS = ["고객번호", "역명", "납기", "사용일", "검침일자", "지침값", "일사용량(톤)", "납기별누적사용량(톤)", "상태"]
@@ -268,4 +268,5 @@ def scrape_range(start: date, end: date, *, meters=None, session=None, out_dir=N
                   "status": "complete" if found == expected else "failed" if errors else "pending"}
         write_json(out_dir / f"{day}.status.json", report)
         reports.append(report)
+    write_arisu_index(runtime_dir)
     return reports

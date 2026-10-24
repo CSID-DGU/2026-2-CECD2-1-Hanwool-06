@@ -105,7 +105,7 @@ class ChatAgentTest(unittest.TestCase):
             self.assertLessEqual(call['timeout'], 55)
         self.assertNotIn('secret-meter', json.dumps(self.sent, ensure_ascii=False))
         names = {schema['name'] for schema in self.sent[1]['tools']}
-        self.assertEqual(names, {'resolve_station'} | chat_agent.DATA_TOOLS)
+        self.assertEqual(names, {'resolve_station'} | chat_agent.DATA_TOOLS | chat_agent.ARISU_TOOLS)
         self.assertGreaterEqual(self.scope_check.call_count, 4)
 
     def test_invalid_or_cross_intent_tools_never_execute(self):
@@ -128,15 +128,17 @@ class ChatAgentTest(unittest.TestCase):
                         answer(answer='정상입니다.'), answer(answer='https://invented.example.com 자료입니다.'),
                         answer(answer='[자료](javascript:alert) 링크입니다.'), answer(answer='2026-08-08 자료입니다.')):
             with self.subTest(invalid=invalid):
-                self.responses = [response(route()), response(output=[tool()]), response(invalid)]
+                # 한 번 고쳐 쓸 기회를 줘도 같은 거짓 답은 끝까지 통과하지 못한다.
+                self.responses = [response(route()), response(output=[tool()]), response(invalid), response(invalid)]
                 result = self.run_agent()
+                self.assertIn('서버 검증을 통과하지 못했다', self.sent[-1]['input'][-1]['content'])
                 self.assertEqual(result['sources'], self.kit.sources)
                 self.assertEqual(result['generated_by'], 'none')
                 self.assertIn('조회된 근거를 직접 표시', result['answer'])
                 self.assertNotIn(invalid['answer'], result['answer'])
 
     def test_malformed_final_keeps_actual_evidence_but_undelivered_output_does_not(self):
-        self.responses = [response(route()), response(output=[tool()]), response('not JSON')]
+        self.responses = [response(route()), response(output=[tool()]), response('not JSON'), response('not JSON')]
         result = self.run_agent()
         self.assertEqual(result['sources'], self.kit.sources)
         self.assertIn('경고', result['answer'])
@@ -303,13 +305,14 @@ class ChatAgentTest(unittest.TestCase):
             with self.subTest(ids=ids):
                 self.kit.execute.side_effect = [{'source_id': 's1'}, {'source_id': 's2'}]
                 self.responses = [response(route(stations=['동부역', '서부역'])),
-                                  response(output=[calls[0]]), response(output=[calls[1]]), response(answer(source_ids=ids))]
+                                  response(output=[calls[0]]), response(output=[calls[1]]), response(answer(source_ids=ids)),
+                                  response(answer(source_ids=ids))]
                 result = self.run_agent('동부역과 서부역 사용량 비교')
                 self.assertEqual(result['generated_by'], generated)
 
     def test_whole_scope_cannot_be_answered_with_a_single_station(self):
         self.kit.sources[0]['kind'] = 'query'
-        self.responses = [response(route(station=None)), response(output=[tool()]), response(answer())]
+        self.responses = [response(route(station=None)), response(output=[tool()]), response(answer()), response(answer())]
         result = self.run_agent('전체 역 현황')
         self.assertEqual(result['generated_by'], 'none')
         self.assertIn('전체 범위의 자료를 확인하지 못해', result['answer'])

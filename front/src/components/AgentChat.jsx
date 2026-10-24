@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { getChatStatus, sendChat } from "../api.js";
-import { chatDraftReducer, chatSourceHref } from "../chat.js";
+import { chatDraftReducer, chatSourceHref, chatWebHref } from "../chat.js";
 import mulsaemi from "../assets/mulsaemi/mulsaemi.webp";
 import mulsaemiProfile from "../assets/mulsaemi/mulsaemi-profile.webp";
 import "./agent-chat.css";
@@ -10,9 +10,12 @@ function Sources({ sources, onNavigate }) {
     <strong>출처</strong>
     {sources.length ? <ul>{sources.map((source, index) => {
       const href = chatSourceHref(source);
+      const web = href ? null : chatWebHref(source);
       const label = typeof source?.label === "string" ? source.label : `자료 ${index + 1}`;
       return <li key={`${source?.id || "source"}-${index}`}>
-        {href ? <a href={href} onClick={onNavigate}>{label}<span aria-hidden="true"> ↗</span></a> : <span>{label}</span>}
+        {href ? <a href={href} onClick={onNavigate}>{label}<span aria-hidden="true"> ↗</span></a>
+          : web ? <a href={web} target="_blank" rel="noopener noreferrer">{label}<span className="chat-source-kind"> 웹 검색, {new URL(web).hostname}</span></a>
+          : <span>{label}</span>}
         {typeof source?.summary === "string" && source.summary && <p>{source.summary}</p>}
       </li>;
     })}</ul> : <p>조회 근거 없음</p>}
