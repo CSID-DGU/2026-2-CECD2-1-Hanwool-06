@@ -60,6 +60,15 @@ def init_db():
           scope_fingerprint TEXT NOT NULL,context TEXT NOT NULL DEFAULT '{}',messages TEXT NOT NULL DEFAULT '[]',
           lease_token TEXT,lease_until REAL NOT NULL DEFAULT 0,updated_at REAL NOT NULL);
         CREATE INDEX IF NOT EXISTS chat_owner_updated ON chat_conversations(user_id,updated_at);
+        CREATE TABLE IF NOT EXISTS reports(
+          id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),title TEXT NOT NULL,body TEXT NOT NULL,
+          page TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,answer TEXT,answered_by INTEGER REFERENCES users(id),
+          answered_at TEXT,answer_read INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS reports_user ON reports(user_id,id);
+        CREATE TABLE IF NOT EXISTS risk_labels(
+          meter_id TEXT NOT NULL REFERENCES meters(id),date TEXT NOT NULL,
+          label TEXT NOT NULL CHECK(label IN ('anomaly','normal','unknown')),severity TEXT NOT NULL,
+          user_id INTEGER NOT NULL REFERENCES users(id),updated_at TEXT NOT NULL,PRIMARY KEY(meter_id,date));
         CREATE TABLE IF NOT EXISTS collection_jobs(
           id INTEGER PRIMARY KEY,status TEXT NOT NULL,trigger TEXT NOT NULL,actor_id INTEGER REFERENCES users(id),
           created_at TEXT NOT NULL,started_at TEXT,finished_at TEXT);
@@ -75,6 +84,9 @@ def init_db():
             c.execute('ALTER TABLE meters ADD COLUMN deleted_at TEXT')
         if 'deleted_at' not in {r['name'] for r in c.execute('PRAGMA table_info(users)')}:
             c.execute('ALTER TABLE users ADD COLUMN deleted_at TEXT')
+        # 서버 관리자: role은 superadmin 그대로 두고 표시만 더한다. 서버 터미널(manage server-admin)에서만 바뀐다.
+        if 'server_admin' not in {r['name'] for r in c.execute('PRAGMA table_info(users)')}:
+            c.execute('ALTER TABLE users ADD COLUMN server_admin INTEGER NOT NULL DEFAULT 0')
         if 'retryable' not in {r['name'] for r in c.execute('PRAGMA table_info(collection_items)')}:
             c.execute('ALTER TABLE collection_items ADD COLUMN retryable INTEGER NOT NULL DEFAULT 0')
         if 'notice_number' not in {r['name'] for r in c.execute('PRAGMA table_info(bills)')}:

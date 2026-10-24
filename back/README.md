@@ -21,6 +21,11 @@
 ```sh
 python -m back.api.manage backup /private/backup/water.sqlite3    # 실행 중에도 안전한 SQLite 백업 (--upload: Object Storage에도 올림)
 python -m back.api.manage reset-password admin@example.com        # 비밀번호 재설정(터미널에서 입력, 다음 로그인 때 변경 요구)
+python -m back.api.manage server-admin admin@example.com          # 서버 관리자 지정(--revoke: 해제, 총괄 관리자로 남음). 웹에서는 줄 수 없음
 ```
+
+권한: 사업소 관리자는 담당 사업소 자료만 보고, 사용자 관리는 서버·총괄 관리자만 엽니다. 총괄 관리자는 사업소 관리자와 새 총괄 관리자를 만들 수 있지만, 총괄 관리자 계정(본인 포함)을 고치거나 지우는 것은 서버 관리자만 합니다. 서버 관리자 계정은 위 명령으로만 바뀝니다.
+
+화면 오른쪽 위 **오류 보고**로 누구나 제목·내용을 보내고 문의 내역에서 답변을 봅니다. 답변은 서버 관리자만 답니다(`reports` 테이블). 역 상세에서 주의·경고 날에 남긴 확인 결과(이상 발생·이상 없음·알 수 없음)는 `risk_labels`에 `anomaly`/`normal`/`unknown`과 그때의 판정(`severity`)으로 쌓여, 모델을 고칠 때 정답 자료로 씁니다.
 
 `APP_DATA_DIR`(기본 `data/runtime/`)에는 계정·세션·수집 자료가 있으니 외부에 노출하지 않습니다.

@@ -35,6 +35,14 @@
 .dt-stat dt { color: var(--mute); font-size: 12px; }
 .dt-stat dd { margin: 2px 0 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .dt-risk-reading { margin: -4px 0 14px; color: var(--alert); font-size: 13px; }
+/* 주의·경고 날의 확인 결과(이상 발생·이상 없음·알 수 없음): 고른 값은 청색으로 채운다 */
+.dt-risk-label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: -4px 0 14px; font-size: 13px; }
+.dt-risk-label > p { margin: 0; font-weight: 600; }
+.dt-risk-label > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.dt-risk-label .secondary-button { min-height: 30px; padding: 4px 12px; }
+.dt-risk-label .secondary-button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand); color: #fff; }
+.dt-risk-label small { color: var(--mute); }
+.dt-risk-label .form-error { flex-basis: 100%; margin: 0; }
 .empty-state + .dt-risk-reading { margin-top: -22px; padding-bottom: 14px; text-align: center; }
 /* 아리수 원격검침: 평소(안전·정상)는 조용하고 주의·경고·장애일 때만 바탕색을 칠해 눈에 띄게 한다 */
 .dt-arisu-stats { grid-template-columns: repeat(3, 1fr); margin: 0; border: 0; }
@@ -57,6 +65,7 @@
 .dt-cal-day.is-unknown { border-style: dashed; border-color: #98a2b3; color: var(--mute); }
 /* 아리수 검침 이상은 테두리가 아니라 모서리 점: 자료 확인(점선)과 색이 아닌 모양으로 갈린다 */
 .dt-cal-day.is-meter-alert::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--alert); }
+.dt-cal-day.is-labeled::before { content: "✓"; position: absolute; right: 3px; bottom: 1px; color: var(--brand); font-size: 10px; font-weight: 700; line-height: 1; }
 .dt-cal-day.is-empty { border-color: transparent; background: var(--ground); color: var(--mute); }
 .dt-cal-day:disabled { cursor: default; }
 .dt-cal-day[aria-pressed="true"] { outline: 2px solid var(--brand); outline-offset: -2px; }
@@ -69,6 +78,7 @@
 .dt-cal-legend .is-unknown::before { border-style: dashed; border-color: #98a2b3; }
 .dt-cal-legend .is-meter-alert::before { width: 6px; height: 6px; margin: 0 8px 0 3px; border: 0; border-radius: 50%; background: var(--alert); vertical-align: 1px; }
 .dt-cal-legend .is-empty::before { border-color: transparent; background: var(--ground); }
+.dt-cal-legend .is-labeled::before { content: "✓"; width: auto; height: auto; border: 0; background: none; color: var(--brand); font-weight: 700; vertical-align: 0; }
 
 .dt-date { display: inline-flex; align-items: center; gap: 8px; }
 .dt-date input { height: 30px; padding: 0 8px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper); font-size: 13px; }

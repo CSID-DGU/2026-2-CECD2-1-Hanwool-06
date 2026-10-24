@@ -119,6 +119,12 @@ export const getSummary = (date) => request(`/summary?${new URLSearchParams(date
 export const getChatStatus = (signal) => request("/chat/status", { signal });
 export const analyzeCause = (meter_id, date) => request("/analyze", { method: "POST", body: { meter_id, date } });
 export const sendAlert = (meter_id, date) => request("/alert", { method: "POST", body: { meter_id, date } });
+export const getRiskLabels = (meterId) => request(`/risk-labels?meter_id=${encodeURIComponent(meterId)}`);
+export const saveRiskLabel = (body) => request("/risk-labels", { method: "POST", body });
+export const getReports = () => request("/reports");
+export const createReport = (body) => request("/reports", { method: "POST", body });
+export const answerReport = (id, answer) => request(`/reports/${encodeURIComponent(id)}/answer`, { method: "POST", body: { answer } });
+export const markReportRead = (id) => request(`/reports/${encodeURIComponent(id)}/read`, { method: "POST" });
 export const pdfUrl = (id, download = false) => `/api/bills/${encodeURIComponent(id)}/pdf?download=${download}`;
 // 파일 요청에 붙인 표식을 서버가 응답 쿠키로 돌려준다(1 준비됨, 0 만들지 못함). 화면은 그때까지 안내를 띄운다.
 // 결과: true 준비됨, false 실패했거나 끝내 오지 않음, null 사용자가 안내를 닫음.

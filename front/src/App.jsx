@@ -5,6 +5,7 @@ import ManagementPage from "./pages/ManagementPage.jsx";
 import StatisticsPage from "./pages/StatisticsPage.jsx";
 import SummaryPopup from "./components/SummaryPopup.jsx";
 import AgentChat from "./components/AgentChat.jsx";
+import ReportPanel, { useReports } from "./components/ReportPanel.jsx";
 import { useCollection } from "./components/CollectionPanel.jsx";
 import { LoginPage, PasswordPage } from "./components/AuthPanels.jsx";
 import AppHeader from "./pages/Dashboard/components/AppHeader.jsx";
@@ -41,10 +42,11 @@ export default function App() {
   dataRef.current = data;
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const refresh = () => setRefreshKey((v) => v + 1);
   const collection = useCollection(session && !session.must_change_password ? session.id : null, refresh);
+  const reports = useReports(session && !session.must_change_password && !isStatic ? session : null);
 
   async function establish(result) {
     const me = result?.user && result?.csrf_token ? result : await getMe();
@@ -65,7 +67,7 @@ export default function App() {
     }
   }
   useEffect(() => {
-    const expired = () => { setSession(null); setData(null); setCsrfToken(); setSummaryOpen(false); };
+    const expired = () => { setSession(null); setData(null); setCsrfToken(); setSummaryOpen(false); setReportOpen(false); };
     const change = () => setHash(window.location.hash);
     window.addEventListener("session-expired", expired);
     window.addEventListener("hashchange", change);
@@ -81,10 +83,10 @@ export default function App() {
     let alive = true, running = false;
     const load = async () => {
       if (running) return;
-      running = true; setRefreshing(true);
+      running = true;
       try { const next = await getData(dataRef.current?.version); if (alive) { if (next) setData(next); setError(""); } }
       catch (e) { if (alive && e.status !== 401) setError(e.message); }
-      finally { running = false; if (alive) setRefreshing(false); }
+      finally { running = false; }
     };
     const visible = () => { if (!document.hidden) load(); };
     load();
@@ -94,7 +96,7 @@ export default function App() {
   }, [session, refreshKey]);
 
   async function signOut() {
-    try { await logout(); setSession(null); setData(null); setCsrfToken(); setSummaryOpen(false); }
+    try { await logout(); setSession(null); setData(null); setCsrfToken(); setSummaryOpen(false); setReportOpen(false); }
     catch (e) { setError(e.message); }
   }
   if (session === undefined) return <main className="auth-page"><p role="status">확인 중…</p></main>;
@@ -102,7 +104,7 @@ export default function App() {
 
   return <>
     <a className="skip-link" href="#main-content" onClick={(e) => { e.preventDefault(); document.getElementById("main-content")?.focus(); }}>본문으로 이동</a>
-    <AppHeader logo={logo} user={session} hash={hash} refreshing={refreshing} onRefresh={refresh}
+    <AppHeader logo={logo} user={session} hash={hash} reportPending={reports.pending} onReport={() => setReportOpen(true)}
       onLogout={isStatic ? undefined : signOut} onSummary={isStatic ? undefined : () => setSummaryOpen(true)} />
     {error && <div className="app-error" role="alert">{error} <button onClick={refresh}>다시 시도</button></div>}
     <div id="main-content" tabIndex={-1}>
@@ -116,5 +118,6 @@ export default function App() {
     <SiteFooter />
     {!isStatic && !session.must_change_password && <AgentChat key={session.id} />}
     {summaryOpen && !session.must_change_password && <SummaryPopup date={data?.status?.reference_date} onClose={() => setSummaryOpen(false)} />}
+    {reportOpen && !session.must_change_password && <ReportPanel user={session} reports={reports} onClose={() => setReportOpen(false)} />}
   </>;
 }

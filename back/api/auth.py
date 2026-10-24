@@ -34,7 +34,7 @@ def token_hash(token):
 
 def public_user(c, row):
     return {**{k: row[k] for k in ('id', 'email', 'name', 'role')},
-            'active': bool(row['active']), 'must_change_password': bool(row['must_change_password']),
+            'active': bool(row['active']), 'must_change_password': bool(row['must_change_password']), 'server_admin': bool(row['server_admin']),
             'office_ids': [r[0] for r in c.execute('SELECT office_id FROM office_members WHERE user_id=? ORDER BY office_id', (row['id'],))]}
 
 
@@ -76,6 +76,14 @@ def superadmin(user=Depends(current_user)):
     if user['role'] != 'superadmin':
         raise HTTPException(403, '총괄 관리자 권한이 필요합니다.')
     return user
+
+
+def require_manageable(actor, target):
+    """총괄 관리자 계정(본인 포함)은 서버 관리자만 고치거나 지운다. 서버 관리자 계정은 웹에서 아무도 바꾸지 못한다."""
+    if target['server_admin']:
+        raise HTTPException(403, '서버 관리자 계정은 서버에서만 바꿀 수 있습니다.')
+    if target['role'] == 'superadmin' and not actor['server_admin']:
+        raise HTTPException(403, '총괄 관리자 계정은 서버 관리자만 수정·삭제할 수 있습니다.')
 
 
 def office_scope(user):

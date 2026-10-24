@@ -29,7 +29,9 @@ const USER_COLUMNS = {
 };
 const userOrder = (a, b) => compareText(a.name, b.name) || compareText(a.email, b.email);
 const NO_USER_FILTERS = { role: "all", office: "all", active: "all" };
-const ROLE_LABELS = { office_admin: "사업소 관리자", superadmin: "총괄 관리자" };
+const ROLE_LABELS = { office_admin: "사업소 관리자", superadmin: "총괄 관리자", server_admin: "서버 관리자" };
+// 서버 관리자는 role이 superadmin인 계정에 표시(server_admin)를 더한 것이라, 화면에서는 따로 한 역할로 보여 준다.
+const roleOf = (u) => (u.server_admin ? "server_admin" : u.role);
 const ACTIVE_CHOICES = [{ value: "active", label: "활성" }, { value: "inactive", label: "비활성" }];
 
 export default function ManagementPage({ data, user, kind, onSaved, collection }) {
@@ -72,7 +74,7 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
       .finally(() => { if (alive) setArchiveLoading(false); });
     return () => { alive = false; };
   }, [isUsers, showDeleted, revision, data]);
-  if (!allowed) return <main className="management-page"><h1>접근 권한이 없습니다</h1><p>사용자 관리는 총괄 관리자만 사용할 수 있습니다.</p></main>;
+  if (!allowed) return <main className="management-page"><h1>접근 권한이 없습니다</h1><p>사용자 관리는 서버 관리자와 총괄 관리자만 사용할 수 있습니다.</p></main>;
   const meterRecords = showDeleted ? allMeters.filter((m) => m.deleted_at) : (data.meters || []).filter((m) => !m.deleted_at);
   const searched = (isUsers ? users : meterRecords).filter((item) => (
     isUsers ? `${item.name} ${item.email}` : `${item.station_name} ${item.customer_number} ${item.display_name || ""} ${item.office_name || ""}`
@@ -80,7 +82,10 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
   const offices = data.offices || [];
   const officeNames = (ids = []) => ids.map((id) => offices.find((o) => String(o.id) === String(id))?.name || "미지정").join(", ");
   // 삭제 확인 문구의 "누구": 총괄 관리자, 또는 "모란영업사업소 관리자"처럼 담당 사업소를 붙인다.
-  const userTitle = (u) => (u.role === "superadmin" ? "총괄 관리자" : u.office_ids?.length ? `${officeNames(u.office_ids)} 관리자` : "사업소 관리자");
+  const userTitle = (u) => (u.role === "superadmin" ? ROLE_LABELS[roleOf(u)] : u.office_ids?.length ? `${officeNames(u.office_ids)} 관리자` : "사업소 관리자");
+  // 서버와 같은 규칙: 서버 관리자 계정은 서버에서만, 총괄 관리자 계정(본인 포함)은 서버 관리자만 바꾼다.
+  const lockReason = (u) => (u.server_admin ? "서버 관리자 계정은 서버에서만 바꿀 수 있습니다."
+    : u.role === "superadmin" && !user.server_admin ? "총괄 관리자 계정은 서버 관리자만 수정·삭제할 수 있습니다." : "");
   // 계량기 표의 머리글 조건과 정렬(전체 현황 계량기 목록과 같은 방식). 선택지는 이 표에 실제로 있는 값만.
   const stateOf = (item) => collection?.data?.meters?.find((m) => String(m.meter_id) === String(item.id));
   const officeLabel = (item) => item.office_name || officeNames([item.office_id]);
@@ -94,12 +99,12 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
   // 사용자 표의 머리글 조건. 담당 사업소는 사업소 관리자에게 실제로 맡겨진 사업소만 고를 수 있고,
   // 총괄 관리자(담당 "전체")는 특정 사업소 조건에 걸리지 않는다(역할 조건으로 따로 고른다).
   const userChoices = !isUsers ? {} : {
-    role: [...new Set(users.map((u) => u.role).filter(Boolean))].sort((a, b) => compareText(ROLE_LABELS[a] || a, ROLE_LABELS[b] || b)).map((role) => ({ value: role, label: ROLE_LABELS[role] || role })),
+    role: [...new Set(users.map(roleOf).filter(Boolean))].sort((a, b) => compareText(ROLE_LABELS[a] || a, ROLE_LABELS[b] || b)).map((role) => ({ value: role, label: ROLE_LABELS[role] || role })),
     office: [...new Map(users.filter((u) => u.role !== "superadmin").flatMap((u) => (u.office_ids || []).map((id) => [String(id), officeNames([id])]))).entries()]
       .sort((a, b) => compareText(a[1], b[1])).map(([value, label]) => ({ value, label })),
     active: ACTIVE_CHOICES,
   };
-  const userPasses = (u) => (userFilters.role === "all" || u.role === userFilters.role)
+  const userPasses = (u) => (userFilters.role === "all" || roleOf(u) === userFilters.role)
     && (userFilters.office === "all" || (u.role !== "superadmin" && (u.office_ids || []).some((id) => String(id) === userFilters.office)))
     && (userFilters.active === "all" || (u.active ? "active" : "inactive") === userFilters.active);
   const passes = (item) => (meterFilters.line === "all" || String(item.line || "") === meterFilters.line)
@@ -148,7 +153,7 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
   }
   return <main className="management-page">
     <div className="management-heading"><div><h1>{isUsers ? "사용자 관리" : "계량기 관리"}</h1>
-      {isUsers && <p>사업소마다 활성 담당자를 2명까지 둘 수 있습니다.</p>}</div>
+      {isUsers && <p>사업소마다 활성 담당자를 2명까지 둘 수 있습니다.{!user.server_admin && " 총괄 관리자 계정은 서버 관리자만 수정·삭제할 수 있습니다."}</p>}</div>
       <button className="primary-button" type="button" onClick={() => { setEditor({}); setMessage(""); }}>{isUsers ? "사용자 추가" : "계량기 추가"}</button></div>
     {error && <p className="form-error" role="alert">{error} <button onClick={() => setRevision((n) => n + 1)}>다시 시도</button></p>}
     {message && <p className="form-message" role="status">{message}</p>}
@@ -188,13 +193,13 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
           {showDeleted ? <th>상태</th> : <FilterHeader label="상태" value={meterFilters.active} items={meterChoices.active} onChange={setFilter("active")} />}
           <th>관리</th>
         </>}</tr></thead>
-        <tbody>{records.map((item) => { const state = isUsers ? null : stateOf(item); return <tr key={item.id}>
-          {isUsers ? <><td><strong>{item.name}</strong><small>{item.email}</small></td><td>{item.role === "superadmin" ? "총괄 관리자" : "사업소 관리자"}</td><td>{item.role === "superadmin" ? "전체" : officeNames(item.office_ids)}</td><td>{collectionTime(item.last_login_at)}</td></>
+        <tbody>{records.map((item) => { const state = isUsers ? null : stateOf(item); const locked = isUsers ? lockReason(item) : ""; return <tr key={item.id}>
+          {isUsers ? <><td><strong>{item.name}</strong><small>{item.email}</small></td><td>{ROLE_LABELS[roleOf(item)]}</td><td>{item.role === "superadmin" ? "전체" : officeNames(item.office_ids)}</td><td>{collectionTime(item.last_login_at)}</td></>
           : <><td>{item.deleted_at || !item.active ? <strong>{item.station_name}</strong> : <a className="station-link" href={detailHref(item.id)}>{item.station_name}</a>}{item.line && <small>{item.line}호선</small>}</td><td>{item.display_name || "기본 계량기"}<small>{item.customer_number}</small></td><td>{item.office_name || officeNames([item.office_id])}</td><td>{item.data_mode === "daily" ? "일일 사용량, 청구서" : item.data_mode === "pending" ? "첫 수집 대기" : "청구서"}</td><td className="meter-collection-cell">{item.deleted_at ? <span>삭제 {collectionTime(item.deleted_at)}</span> : <><strong>{meterCollectionState(item, state)}</strong>{item.provider === "arisu" && <><small>최근 성공 {collectionTime(state?.last_success_at)}</small>{state && <details><summary>{collectionLabel(state.status)}</summary><p>최근 시도 {collectionTime(state.last_attempt_at)}{state.message ? `. ${state.message}` : ""}</p></details>}</>}</>}</td></>}
           <td><span className={`status-label ${!item.active || item.deleted_at ? "status-label--off" : ""}`}>{item.deleted_at ? "삭제됨" : !item.active ? "비활성" : "활성"}</span></td>
           <td><div className="table-actions">{item.deleted_at ? <button type="button" className="secondary-button" disabled={actionBusy} onClick={() => changeDeleted(item, false)}>복원</button> : <>
-            <button type="button" className="secondary-button" onClick={() => setEditor(item)} aria-label={`${item.name || item.station_name} 수정`}>수정</button>
-            {isUsers && <button type="button" className="text-button danger-text" disabled={actionBusy || item.id === user.id} title={item.id === user.id ? "본인 계정은 삭제할 수 없습니다." : undefined} onClick={() => { setError(""); setDeleting(item); }} aria-label={`${item.name} 삭제`}>삭제</button>}
+            <button type="button" className="secondary-button" disabled={Boolean(locked)} title={locked || undefined} onClick={() => setEditor(item)} aria-label={`${item.name || item.station_name} 수정`}>수정</button>
+            {isUsers && <button type="button" className="text-button danger-text" disabled={actionBusy || item.id === user.id || Boolean(locked)} title={locked || (item.id === user.id ? "본인 계정은 삭제할 수 없습니다." : undefined)} onClick={() => { setError(""); setDeleting(item); }} aria-label={`${item.name} 삭제`}>삭제</button>}
             {!isUsers && <><button type="button" className="secondary-button" disabled={collection?.busy || isCollectionActive(state) || !item.active || item.provider !== "arisu"} onClick={() => updateMeter(item)}>{isCollectionActive(state) ? collectionLabel(state.status) : "정보 업데이트"}</button><button type="button" className="text-button danger-text" disabled={actionBusy} onClick={() => { setError(""); setDeleting(item); }} aria-label={`${item.station_name} ${item.customer_number} 삭제`}>삭제</button></>}
           </>}</div></td>
         </tr>; })}</tbody>

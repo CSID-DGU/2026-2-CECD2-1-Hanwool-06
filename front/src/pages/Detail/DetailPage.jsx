@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { buildStations, CONTRACT_NOTE, CONTRACT_TAG, latestDate, kdate, ton, won, detailHref, isDetailDate, signedPct, CHART_COLORS, SEVERITY_TONE, arisuNow } from "./data.js";
+import { buildStations, CONTRACT_NOTE, CONTRACT_TAG, latestDate, kdate, ton, won, detailHref, isDetailDate, signedPct, CHART_COLORS, SEVERITY_TONE, RISK_LABELS, arisuNow } from "./data.js";
 import { Card, EmptyNote, Stat } from "./ui";
 import LineChart from "./LineChart";
 import RiskCalendar from "./RiskCalendar";
 import Bill from "./Bill";
-import { exportUrl } from "../../api.js";
+import { exportUrl, getRiskLabels, isStatic, saveRiskLabel } from "../../api.js";
+import { collectionTime } from "../../collection.js";
 import FileLink from "../../components/FileLink.jsx";
 import CollectionPanel from "../../components/CollectionPanel.jsx";
 import { SelectField } from "../../components/Dropdown.jsx";
@@ -125,6 +126,15 @@ function ArisuCard({ arisu }) {
 function RiskPanel({ line, requestedDate, readings = [], latestRisk }) {
   const days = line.riskDays;
   const [selected, setSelected] = useState(requestedDate || days.at(-1)?.date || "");
+  const [labels, setLabels] = useState({});
+  const [labelError, setLabelError] = useState("");
+  useEffect(() => {
+    if (isStatic) return;
+    let alive = true;
+    getRiskLabels(line.meterId).then((result) => { if (alive) setLabels(result); })
+      .catch((e) => { if (alive) setLabelError(e.message); });
+    return () => { alive = false; };
+  }, [line.meterId]);
   const day = days.find((d) => d.date === selected);
   const reading = readings.find((r) => r.date === selected);
   const note = day?.note;
@@ -147,12 +157,33 @@ function RiskPanel({ line, requestedDate, readings = [], latestRisk }) {
         <Stat label="오차" value={Number.isFinite(day.error) ? `${day.error > 0 ? "+" : ""}${ton(day.error)} 톤` : "—"} />
         <Stat label="예측 대비" value={signedPct(day.pct, "비율 없음")} />
       </dl>
+      {!isStatic && (day.severity === "주의" || day.severity === "경고") && <RiskLabel key={day.date} meterId={line.meterId} date={day.date} saved={labels[day.date]} loadError={labelError}
+        onSaved={(saved) => setLabels((current) => ({ ...current, [saved.date]: saved }))} />}
       </> : <EmptyNote>{latestRisk && selected > latestRisk ? "아직 판정 전입니다." : `${selected}에는 위험도 분석 결과가 없습니다.`}</EmptyNote>}
       {reading?.status && reading.status !== "정상" && <p className="dt-risk-reading">계량기 상태: {reading.status}</p>}
-      <RiskCalendar days={days} readings={readings} selected={selected} onSelect={setSelected} />
+      <RiskCalendar days={days} readings={readings} labels={labels} selected={selected} onSelect={setSelected} />
       <p className="form-hint">위험도는 매일 08시 수집이 끝나면 전날 사용량으로 판정합니다.</p>
     </Card>
   );
+}
+
+// 주의·경고 날이 실제로 상수도 이상이었는지 사람이 남긴다. 나중에 모델을 고칠 때 쓸 정답 자료다.
+function RiskLabel({ meterId, date, saved, loadError, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function choose(label) {
+    setBusy(true); setError("");
+    try { onSaved(await saveRiskLabel({ meter_id: meterId, date, label })); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+  return <div className="dt-risk-label">
+    <p id="risk-label-title">실제로 상수도에 이상이 있었나요?</p>
+    <div role="group" aria-labelledby="risk-label-title">{Object.entries(RISK_LABELS).map(([value, text]) =>
+      <button key={value} type="button" className="secondary-button" aria-pressed={saved?.label === value} disabled={busy} onClick={() => choose(value)}>{text}</button>)}</div>
+    {saved && <small>{saved.user_name} · {collectionTime(saved.updated_at)}에 남김</small>}
+    {(error || loadError) && <p className="form-error" role="alert">{error || `확인 결과를 불러오지 못했습니다. ${loadError}`}</p>}
+  </div>;
 }
 
 // 일일 사용량과 승하차를 한 날짜로 함께 본다.

@@ -13,6 +13,9 @@ def main():
     backup.add_argument('destination', type=Path)
     backup.add_argument('--upload', action='store_true', help='Object Storage(backups/sqlite/)에도 올린다. OBJECT_STORAGE_* 설정 필요')
     commands.add_parser('reset-password').add_argument('email')
+    server = commands.add_parser('server-admin', help='서버 관리자로 지정(--revoke: 총괄 관리자로 되돌림). 웹에서는 바꿀 수 없다')
+    server.add_argument('email')
+    server.add_argument('--revoke', action='store_true')
     commands.add_parser('export-static', help='로그인 없이 열어 보는 한 파일짜리 화면 저장본').add_argument('destination', type=Path)
     args = parser.parse_args()
     if not config.APP_DB_PATH.is_file():
@@ -46,6 +49,17 @@ def main():
         row = c.execute('SELECT id FROM users WHERE email=?', (args.email.strip().lower(),)).fetchone()
         if not row:
             parser.error('등록된 사용자가 없습니다.')
+        if args.command == 'server-admin':
+            # 서버 관리자는 총괄 관리자 권한에 총괄 계정 관리를 더한 것이라 사업소 담당은 뺀다. 바뀐 권한으로 다시 로그인하게 한다.
+            if args.revoke:
+                c.execute('UPDATE users SET server_admin=0 WHERE id=?', (row['id'],))
+            else:
+                c.execute("UPDATE users SET role='superadmin',server_admin=1 WHERE id=?", (row['id'],))
+                c.execute('DELETE FROM office_members WHERE user_id=?', (row['id'],))
+            c.execute('DELETE FROM sessions WHERE user_id=?', (row['id'],))
+            db.audit(c, None, 'operator_server_admin_revoke' if args.revoke else 'operator_server_admin_grant', row['id'])
+            print('서버 관리자를 해제했습니다(총괄 관리자로 남음).' if args.revoke else '서버 관리자로 지정했습니다.', '기존 세션을 만료했습니다.')
+            return
         password = getpass.getpass('새 비밀번호 (12~128자): ')
         if password != getpass.getpass('새 비밀번호 확인: '):
             parser.error('입력한 비밀번호가 다릅니다.')

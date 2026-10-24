@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -12,7 +13,7 @@ from urllib.parse import unquote
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from pypdf import PdfReader
-from back.api import collection, config, data_access, db, main, mailer
+from back.api import catalog, collection, config, data_access, db, main, mailer, manage
 
 
 class ApplicationTest(unittest.TestCase):
@@ -75,7 +76,7 @@ class ApplicationTest(unittest.TestCase):
         self.create_manager('staff2@example.com')
         blocked = self.client.post('/api/users', json={'email': 'third@example.com', 'password': 'ManagerPass!234','name': '세번째','role':'office_admin','office_ids':['동부']})
         self.assertEqual(blocked.status_code, 409)
-        self.assertEqual(self.client.patch(f"/api/users/{root['id']}", json={'active': False}).status_code, 409)
+        self.assertEqual(self.client.patch(f"/api/users/{root['id']}", json={'active': False}).status_code, 403)
         manager = TestClient(main.app, base_url='http://localhost')
         staff = self.login(manager, 'staff@example.com', 'ManagerPass!234')
         self.assertEqual(manager.get('/api/users').status_code, 403)
@@ -172,6 +173,110 @@ class ApplicationTest(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/users/{staff['id']}").status_code, 404)
         self.assertEqual(self.client.patch(f"/api/users/{staff['id']}", json={'active': True}).status_code, 404)
         self.create_manager()   # 같은 이메일로 같은 사업소에 다시 등록할 수 있다
+        manager.close()
+
+    def server_admin(self, *args):
+        with patch('sys.argv', ['manage', 'server-admin', *args]), redirect_stdout(io.StringIO()):
+            manage.main()
+
+    def test_only_server_admins_change_superadmin_accounts(self):
+        root = self.login()
+        # 총괄 관리자도 새 총괄을 만들 수 있지만, 만든 뒤에는 본인 것을 포함해 총괄 계정을 고치거나 지우지 못한다.
+        peer = self.client.post('/api/users', json={'email': 'peer@example.com', 'password': 'PeerPass!2345', 'name': '총괄2', 'role': 'superadmin'})
+        self.assertEqual(peer.status_code, 201, peer.text)
+        peer = peer.json()
+        for account in (peer, root):
+            self.assertEqual(self.client.patch(f"/api/users/{account['id']}", json={'name': '변경'}).status_code, 403)
+        self.assertEqual(self.client.patch(f"/api/users/{peer['id']}", json={'password': 'Takeover!2345'}).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/users/{peer['id']}").status_code, 403)
+        # 서버 관리자 직급은 웹으로 줄 수 없고 서버 터미널에서만 준다. 받으면 사업소 담당은 빠지고 다시 로그인한다.
+        staff = self.create_manager()
+        self.assertEqual(self.client.patch(f"/api/users/{staff['id']}", json={'server_admin': True}).status_code, 422)
+        operator = TestClient(main.app, base_url='http://localhost')
+        self.login(operator, 'staff@example.com', 'ManagerPass!234')
+        self.server_admin('staff@example.com')
+        self.assertEqual(operator.get('/api/data').status_code, 401)
+        me = self.login(operator, 'staff@example.com', 'ManagerPass!234New')
+        self.assertEqual((me['role'], me['server_admin'], me['office_ids']), ('superadmin', True, []))
+        # 서버 관리자 계정은 누구도 웹에서 바꾸지 못한다.
+        for client in (self.client, operator):
+            self.assertEqual(client.patch(f"/api/users/{staff['id']}", json={'name': '변경'}).status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/users/{staff['id']}").status_code, 403)
+        # 서버 관리자는 총괄 계정을 고치고 지울 수 있다(sudo).
+        self.assertEqual(operator.patch(f"/api/users/{root['id']}", json={'name': '본부 총괄'}).status_code, 200)
+        self.assertEqual(operator.delete(f"/api/users/{peer['id']}").status_code, 200)
+        # 해제하면 총괄 관리자로 남고, 다시 총괄 계정을 바꿀 수 없다.
+        self.server_admin('staff@example.com', '--revoke')
+        me = self.login(operator, 'staff@example.com', 'ManagerPass!234New')
+        self.assertEqual((me['role'], me['server_admin']), ('superadmin', False))
+        self.assertEqual(operator.patch(f"/api/users/{root['id']}", json={'name': '변경'}).status_code, 403)
+        operator.close()
+
+    def test_error_reports_are_answered_by_server_admins(self):
+        self.login()
+        staff = self.create_manager()
+        self.create_manager('west@example.com', '서부')
+        reporter, other = TestClient(main.app, base_url='http://localhost'), TestClient(main.app, base_url='http://localhost')
+        self.login(reporter, 'staff@example.com', 'ManagerPass!234')
+        self.login(other, 'west@example.com', 'ManagerPass!234')
+        sent = reporter.post('/api/reports', json={'title': ' 달력 날짜 오류 ', 'body': '  강동역 달력이 하루씩 밀려 보입니다\n확인 부탁드립니다  ', 'page': '#/detail?meter=000000001'})
+        self.assertEqual(sent.status_code, 201, sent.text)
+        report = sent.json()['id']
+        self.assertEqual(other.post('/api/reports', json={'title': '서부 오류', 'body': '내용'}).status_code, 201)
+        for bad in ({'title': ' ', 'body': '내용'}, {'title': '제목', 'body': '   '}, {'title': '제목', 'body': '중간\x00글자'},
+                    {'title': 'x' * 101, 'body': '내용'}, {'title': '제목', 'body': 'x' * 2001}, {'title': '제목', 'body': '내용', 'page': '#/\x01'}):
+            self.assertEqual(reporter.post('/api/reports', json=bad).status_code, 422, bad)
+        # 보낸 사람은 자기 문의 내역만 본다. 총괄 관리자도 남의 보고는 보지 못하고 답변하지 못한다.
+        self.assertEqual([(r['title'], r['body'], r['answer']) for r in reporter.get('/api/reports').json()],
+                         [('달력 날짜 오류', '강동역 달력이 하루씩 밀려 보입니다\n확인 부탁드립니다', None)])
+        self.assertEqual(self.client.get('/api/reports').json(), [])
+        self.assertEqual(self.client.post(f'/api/reports/{report}/answer', json={'answer': '확인'}).status_code, 403)
+        # 서버 관리자는 모든 보고를 최근 순으로, 누가 언제 어느 화면에서 보냈는지와 함께 보고 답변한다.
+        self.server_admin('chief@example.com')
+        self.login()
+        inbox = self.client.get('/api/reports').json()
+        self.assertEqual([(r['user_name'], r['user_email'], r['title'], r['page']) for r in inbox],
+                         [('담당자', 'west@example.com', '서부 오류', ''), ('담당자', 'staff@example.com', '달력 날짜 오류', '#/detail?meter=000000001')])
+        self.assertTrue(inbox[0]['created_at'].startswith('20'))
+        self.assertEqual(self.client.post(f'/api/reports/{report}/answer', json={'answer': ' '}).status_code, 422)
+        self.assertEqual(self.client.post('/api/reports/999/answer', json={'answer': '없는 보고'}).status_code, 404)
+        self.assertEqual(self.client.post(f'/api/reports/{report}/answer', json={'answer': '  날짜 계산을 고쳤습니다  '}).status_code, 200)
+        # 보낸 사람은 문의 내역에서 답변을 보고, 열어 보면 확인한 것으로 남는다. 답변을 고치면 다시 새 답변이다.
+        answered = reporter.get('/api/reports').json()[0]
+        self.assertEqual((answered['answer'], answered['answered_by_name'], answered['answer_read']), ('날짜 계산을 고쳤습니다', '총괄 관리자', False))
+        self.assertEqual(other.post(f'/api/reports/{report}/read').status_code, 404)
+        self.assertEqual(reporter.post(f'/api/reports/{report}/read').status_code, 200)
+        self.assertTrue(reporter.get('/api/reports').json()[0]['answer_read'])
+        self.assertTrue(self.client.get('/api/reports').json()[1]['answer_read'])
+        self.assertEqual(self.client.post(f'/api/reports/{report}/answer', json={'answer': '다시 확인했습니다'}).status_code, 200)
+        self.assertEqual((lambda r: (r['answer'], r['answer_read']))(reporter.get('/api/reports').json()[0]), ('다시 확인했습니다', False))
+        with db.connect() as c:
+            for index in range(20):
+                db.audit(c, staff['id'], 'report_create', f'earlier:{index}')
+        self.assertEqual(reporter.post('/api/reports', json={'title': '한 번 더', 'body': '내용'}).status_code, 429)
+        reporter.close(); other.close()
+
+    def test_staff_record_whether_warning_days_were_real_problems(self):
+        self.login()
+        self.create_manager()
+        manager = TestClient(main.app, base_url='http://localhost')
+        self.login(manager, 'staff@example.com', 'ManagerPass!234')
+        label = lambda meter, date, value: manager.post('/api/risk-labels', json={'meter_id': meter, 'date': date, 'label': value})
+        labels = lambda meter: manager.get('/api/risk-labels', params={'meter_id': meter})
+        self.assertEqual(labels('000000001').json(), {})
+        self.assertEqual(label('000000001', '2026-08-31', 'anomaly').status_code, 200)
+        saved = label('000000001', '2026-08-31', 'normal')   # 다시 고를 수 있다
+        self.assertEqual((saved.status_code, saved.json()['label']), (200, 'normal'))
+        self.assertEqual({d: (v['label'], v['severity'], v['user_name']) for d, v in labels('000000001').json().items()},
+                         {'2026-08-31': ('normal', '경고', '담당자')})
+        # 주의·경고로 판정한 날만, 정해진 세 값으로, 담당 사업소 계량기에만 남긴다.
+        catalog.data_sources.return_value[1]['000000001'].append({'date': '2026-08-30', 'actual': 10, 'pred': 10, 'residual': 0, 'z': 0, 'severity': '정상', 'dir': '', 'err': False})
+        self.assertEqual(label('000000001', '2026-08-30', 'anomaly').status_code, 422)
+        self.assertEqual(label('000000001', '2026-08-29', 'anomaly').status_code, 404)
+        for value, date in (('maybe', '2026-08-31'), ('anomaly', '')):
+            self.assertEqual(label('000000001', date, value).status_code, 422)
+        self.assertEqual(label('000000002', '2026-08-31', 'anomaly').status_code, 404)
+        self.assertEqual(labels('000000002').status_code, 404)
         manager.close()
 
     def test_user_list_shows_latest_successful_login(self):

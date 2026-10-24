@@ -57,6 +57,8 @@ small { font-size: 12px; }
 .account-actions button:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
 .account-actions button:first-child { padding: 5px 10px; border: 1px solid var(--rule); border-radius: var(--radius); color: var(--ink); font-weight: 600; }
 .account-actions button:first-child:hover { border-color: var(--sub); text-decoration: none; }
+.account-actions .report-button, .account-actions .report-button:hover:not(:disabled) { color: var(--alert); font-weight: 600; }
+.report-badge { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 9px; background: var(--alert); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
 .account-actions a { font-weight: 600; }
 .account-actions a span { color: var(--mute); font-weight: 400; }
 
@@ -175,6 +177,25 @@ button.line-badge[aria-pressed="false"] { background: var(--paper); box-shadow: 
 .dialog-close { width: 28px; height: 28px; padding: 0; border: 0; background: none; color: var(--sub); font-size: 22px; line-height: 1; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .ag-dialog > .dialog-actions { padding: 12px 20px; border-top: 1px solid var(--rule); }
+/* 오류 보고: 보낸 사람은 새 오류 보고·문의 내역, 서버 관리자는 답변 대기·전체 목록. 제목을 누르면 내용과 답변을 본다 */
+.report-dialog { max-width: 760px; }
+.report-dialog .management-tabs { margin-bottom: 14px; }
+.report-dialog .management-tabs button { font-size: 14px; }
+.report-dialog .ag-body > .form-error, .report-dialog .ag-body > .form-message { margin: 0 0 12px; }
+.report-table .text-button { text-align: left; }
+.report-status { display: inline-block; padding: 1px 8px; border-radius: var(--radius); font-size: 12px; font-weight: 600; white-space: nowrap; vertical-align: 1px; }
+.report-status.is-waiting { background: var(--warn-bg); color: var(--warn); }
+.report-status.is-new { background: var(--alert-bg); color: var(--alert); }
+.report-status.is-done { background: var(--ok-bg); color: var(--ok); }
+.report-detail h3 { margin: 10px 0 4px; font-size: 16px; }
+.report-meta { margin: 0 0 8px; color: var(--mute); font-size: 12px; }
+.report-text { margin: 0; padding: 10px 12px; border-radius: var(--radius); background: var(--ground); white-space: pre-wrap; }
+.report-answer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.report-answer h4 { margin: 0 0 8px; font-size: 14px; }
+.report-form { display: grid; gap: 10px; }
+.report-form .form-hint, .report-form .form-error, .report-form .form-message { margin: 0; }
+.report-form textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper); color: var(--ink); font: inherit; font-weight: 400; resize: vertical; }
+.report-form textarea:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
 
 /* 전체 현황 */
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; }

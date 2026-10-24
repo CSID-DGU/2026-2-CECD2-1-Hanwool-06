@@ -408,6 +408,8 @@ def save_user(body, actor, user_id=None):
             row = c.execute('SELECT * FROM users WHERE id=? AND deleted_at IS NULL', (user_id,)).fetchone() if user_id else None
             if user_id and row is None:
                 raise HTTPException(404, '사용자를 찾을 수 없습니다.')
+            if row:
+                auth.require_manageable(actor, row)
             old = auth.public_user(c, row) if row else {}
             v = old | body
             email, name = v.get('email', ''), v.get('name', '')
@@ -476,6 +478,7 @@ def delete_user(user_id: int, user=Depends(auth.superadmin)):
         row = c.execute('SELECT * FROM users WHERE id=? AND deleted_at IS NULL', (user_id,)).fetchone()
         if row is None:
             raise HTTPException(404, '사용자를 찾을 수 없습니다.')
+        auth.require_manageable(user, row)
         old = auth.public_user(c, row)
         # 활동 기록(audit_log·수집 작업)이 이 사용자를 가리키므로 행은 남긴다. 같은 이메일로 다시 등록할 수 있게 이메일은 비운다.
         c.execute('UPDATE users SET email=?,active=0,deleted_at=? WHERE id=?', (f'deleted-{user_id}@deleted.invalid', db.now(), user_id))
@@ -593,6 +596,100 @@ def chat_stream(body: Chat, user=Depends(auth.current_user)):
                 return
 
     return StreamingResponse(stream(), media_type='text/event-stream', headers={'X-Accel-Buffering': 'no'})
+
+
+class RiskLabel(StrictModel):
+    meter_id: str = Field(min_length=1, max_length=100)
+    date: str = Field(pattern=r'^\d{4}-\d{2}-\d{2}$')
+    label: str = Field(pattern=r'^(anomaly|normal|unknown)$')   # 이상 발생, 이상 없음, 알 수 없음
+
+
+@app.get('/api/risk-labels')
+def risk_labels(meter_id: str, user=Depends(auth.current_user)):
+    with db.connect() as c:
+        get_meter(c, meter_id, user)
+        return {r['date']: dict(r) for r in c.execute(
+            'SELECT l.date,l.label,l.severity,l.updated_at,u.name AS user_name FROM risk_labels l JOIN users u ON u.id=l.user_id WHERE l.meter_id=? ORDER BY l.date', (meter_id,))}
+
+
+@app.post('/api/risk-labels')
+def save_risk_label(body: RiskLabel, user=Depends(auth.current_user)):
+    """주의·경고 날이 실제로 이상이었는지 사람이 확인해 남긴다. 모델을 고칠 때 쓸 정답 자료라 그때의 판정도 함께 둔다."""
+    _, date, item = analysis_input(body, user)
+    if item['심각도'] not in ('주의', '경고'):
+        raise HTTPException(422, '주의·경고로 판정한 날에만 확인 결과를 남길 수 있습니다.')
+    now = db.now()
+    with db.connect() as c:
+        c.execute('INSERT INTO risk_labels(meter_id,date,label,severity,user_id,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(meter_id,date) DO UPDATE '
+                  'SET label=excluded.label,severity=excluded.severity,user_id=excluded.user_id,updated_at=excluded.updated_at',
+                  (body.meter_id, date, body.label, item['심각도'], user['id'], now))
+        db.audit(c, user['id'], 'risk_label', f'{body.meter_id}:{date}', {'label': body.label})
+    return {'date': date, 'label': body.label, 'severity': item['심각도'], 'updated_at': now, 'user_name': user['name']}
+
+
+def report_text(value, label):
+    value = value.strip()
+    if not value or any(ord(ch) < 32 and ch not in '\n\r\t' for ch in value):
+        raise HTTPException(422, f'{label}을 입력하세요. 줄바꿈 말고는 특수 문자를 쓸 수 없습니다.')
+    return value
+
+
+class Report(StrictModel):
+    title: str = Field(min_length=1, max_length=100)
+    body: str = Field(min_length=1, max_length=2000)
+    page: str = Field(default='', max_length=200, pattern=r'^[^\x00-\x1f]*$')   # 보고할 때 보던 화면(#/meters 등)
+
+
+class ReportAnswer(StrictModel):
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+@app.get('/api/reports')
+def reports(user=Depends(auth.current_user)):
+    """오류 보고(문의) 목록, 최근 순. 서버 관리자는 모든 보고를, 다른 사용자는 자기 문의 내역만 본다."""
+    # ponytail: 보고가 적어 한 번에 전부 보낸다. 많아지면 쪽 단위로 나눠 받는다.
+    query = '''SELECT r.id,r.user_id,u.name AS user_name,u.email AS user_email,r.title,r.body,r.page,r.created_at,
+                      r.answer,a.name AS answered_by_name,r.answered_at,r.answer_read
+               FROM reports r JOIN users u ON u.id=r.user_id LEFT JOIN users a ON a.id=r.answered_by'''
+    with db.connect() as c:
+        rows = c.execute(query + ' ORDER BY r.id DESC') if user['server_admin'] else c.execute(query + ' WHERE r.user_id=? ORDER BY r.id DESC', (user['id'],))
+        return [dict(r) | {'answer_read': bool(r['answer_read'])} for r in rows]
+
+
+@app.post('/api/reports', status_code=201)
+def create_report(body: Report, user=Depends(auth.current_user)):
+    title, text = report_text(body.title, '제목'), report_text(body.body, '내용')
+    with db.connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if attempts_last_hour(c, user['id'], 'report_create') >= 20:
+            raise HTTPException(429, '오류 보고는 계정당 한 시간에 20건까지 보낼 수 있습니다.')
+        report_id = c.execute('INSERT INTO reports(user_id,title,body,page,created_at) VALUES(?,?,?,?,?)',
+                              (user['id'], title, text, body.page.strip(), db.now())).lastrowid
+        db.audit(c, user['id'], 'report_create', report_id)
+    return {'id': report_id}
+
+
+@app.post('/api/reports/{report_id}/answer')
+def answer_report(report_id: int, body: ReportAnswer, user=Depends(auth.current_user)):
+    """답변은 서버 관리자만 단다. 고쳐 저장하면 보낸 사람에게 다시 새 답변으로 보인다."""
+    if not user['server_admin']:
+        raise HTTPException(403, '오류 보고에는 서버 관리자만 답변할 수 있습니다.')
+    answer = report_text(body.answer, '답변')
+    with db.connect() as c:
+        if not c.execute('UPDATE reports SET answer=?,answered_by=?,answered_at=?,answer_read=0 WHERE id=?', (answer, user['id'], db.now(), report_id)).rowcount:
+            raise HTTPException(404, '오류 보고를 찾을 수 없습니다.')
+        db.audit(c, user['id'], 'report_answer', report_id)
+    return {'ok': True}
+
+
+@app.post('/api/reports/{report_id}/read')
+def read_report(report_id: int, user=Depends(auth.current_user)):
+    """보낸 사람이 답변을 열어 보면 확인한 것으로 남긴다(머리글의 새 답변 숫자, 서버 관리자의 확인 여부)."""
+    with db.connect() as c:
+        if not c.execute('SELECT 1 FROM reports WHERE id=? AND user_id=?', (report_id, user['id'])).fetchone():
+            raise HTTPException(404, '오류 보고를 찾을 수 없습니다.')
+        c.execute('UPDATE reports SET answer_read=1 WHERE id=? AND answer IS NOT NULL', (report_id,))
+    return {'ok': True}
 
 
 @app.post('/api/alert')

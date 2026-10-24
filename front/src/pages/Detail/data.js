@@ -9,6 +9,8 @@ export const won = (n) => Number.isFinite(n) ? Math.round(n).toLocaleString("ko-
 export const ton = (n) => Number.isFinite(n) ? n.toLocaleString("ko-KR", { maximumFractionDigits: 1 }) : "—";
 export const signedPct = (pct, missing = "—") => pct == null ? missing : `${pct > 0 ? "+" : ""}${pct}%`;
 export const SEVERITY_TONE = { 정상: "ok", 주의: "warn", 경고: "alert" };
+// 주의·경고 날에 사람이 남기는 확인 결과. 서버는 영문 값으로 저장한다.
+export const RISK_LABELS = { anomaly: "이상 발생", normal: "이상 없음", unknown: "알 수 없음" };
 // 차트 계열색: 사용량은 공사 청색, 승하차는 청록, 요금은 황동색.
 export const CHART_COLORS = { usage: "#17288b", riders: "#0e7c7b", fee: "#8a6d3b" };
 const baseName = (name) => String(name || "").replace(/\d+$/, "");
