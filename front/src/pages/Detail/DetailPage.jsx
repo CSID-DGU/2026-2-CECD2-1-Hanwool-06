@@ -111,7 +111,8 @@ function StationHeader({ station, line, selectMeter, requestedDate, dateRisk }) 
 function ArisuCard({ arisu }) {
   const now = arisuNow(arisu);
   const status = (value) => <span className={`dt-arisu-value is-${value.tone}`}>{value.text}</span>;
-  return <Card title="아리수 원격검침(실시간)" right={[now.cardAt && `${now.cardAt} 기준`, now.checkedAt && `${now.checkedAt} 확인`].filter(Boolean).join(", ")}>
+  const basis = now.progressDay ? `${now.progressDay} 진행 중` : now.cardAt && `${now.cardAt} 기준`;
+  return <Card title="아리수 원격검침(실시간)" right={[basis, now.checkedAt && `${now.checkedAt} 확인`].filter(Boolean).join(", ")}>
     <dl className="dt-risk-stats dt-arisu-stats">
       <Stat label="누수위험" value={status(now.leak)} />
       <Stat label="실시간 사용량" value={now.usage === null ? "—" : `${ton(now.usage)} 톤`} />

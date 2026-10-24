@@ -631,7 +631,39 @@ def _count_claims(text):
             yield labels, int(match[2])
 
 
-def _validated_answer(raw, kit, route, delivered_ids=None, primary_ids=None, primary_groups=None):
+_INCREASE = re.compile(r'증가|늘어|늘었|급증')
+_DECREASE = re.compile(r'감소|줄어|줄었|급감')
+_DAY_RANGE = re.compile(r'\d{4}-\d{2}-\d{2}\s*[~～∼–—]\s*\d{4}-\d{2}-\d{2}')
+
+
+def _missing_alert_stations(answer, kit, ids, names, message):
+    """주의·경고 역을 나열한 답은 인용한 이상 조회의 주의·경고 역을 모두 써야 한다. 답에 따로 쓴 날짜가 있으면 그날의 역,
+    없으면(기간 'A~B'만 쓰거나 날짜가 없으면) 조회 기간의 역이다. '7일 건수 … 2026-10-23에는 A역'처럼 기간은 건수, 날짜는 목록일 수 있다.
+    사용량 증가·감소와 상관없다(누수 질문에서도 감소를 빼지 않는다). 질문이 주의나 경고, 증가나 감소 하나만 물으면 그것만 본다.
+    상세가 잘린 조회는 행이 최신 날짜부터 오므로 가장 오래된 날만 일부일 수 있어 그날은 보지 않는다."""
+    asked = [label for label in ('주의', '경고') if label in message]
+    labels = set(asked) if len(asked) == 1 else {'주의', '경고'}
+    up, down = bool(_INCREASE.search(message)), bool(_DECREASE.search(message))
+    directions = {'증가'} if up and not down else {'감소'} if down and not up else None
+    days = set(re.findall(r'\d{4}-\d{2}-\d{2}', _DAY_RANGE.sub(' ', _iso_dates(answer))))
+    mentioned = {name for _, _, name in _station_mentions(answer, names)}
+    missing = set()
+    for source in ids:
+        fact = kit.evidence[source]
+        rows = [row for row in fact.get('rows') or [] if isinstance(row, dict) and isinstance(row.get('date'), str)]
+        if 'severity_counts' not in fact or not rows:
+            continue
+        dates = {row['date'] for row in rows}
+        complete = {day for day in dates if day > min(dates)} if fact.get('truncated') else dates
+        target = dates & days or dates
+        stations = {row['station'] for row in rows if row['date'] in target & complete and row.get('severity') in labels
+                    and (directions is None or row.get('deviation_direction') in directions) and isinstance(row.get('station'), str)}
+        if stations & mentioned:   # 역을 나열한 답만 본다(건수만 답한 답은 건수 검사가 맡는다)
+            missing |= stations - mentioned
+    return missing
+
+
+def _validated_answer(raw, kit, route, delivered_ids=None, primary_ids=None, primary_groups=None, message=''):
     parsed = Answer.model_validate_json(raw)
     by_id = {source['id']: source for source in kit.sources}
     ids = list(dict.fromkeys(parsed.source_ids))
@@ -702,6 +734,8 @@ def _validated_answer(raw, kit, route, delivered_ids=None, primary_ids=None, pri
                 raise ValueError('Unsupported count')
     elif any(label in answer and label not in evidence for label in LABELS):
         raise ValueError('Unsupported severity')
+    if _missing_alert_stations(answer, kit, ids, names, message):
+        raise ValueError('Missing alert stations')
     if route.intent == 'CAUSE_ANALYSIS' or parsed.is_hypothesis:
         if re.search(r'(?:누수|고장|파손|단수).{0,15}(?:확정|확인되었습니다|확인됐|때문입니다|발생했습니다)|(?:누수|고장|파손|단수)입니다|원인은.{0,30}(?:입니다|확정)', answer):
             raise ValueError('Unverified definitive cause')
@@ -900,6 +934,8 @@ REPAIR_NOTES = {
                                 '장애가 없다고 쓸 때는 그 역·날짜를 조회한 아리수 결과를 인용하고, 근거에 장애가 있으면 없다고 쓰지 않는다.',
     'Zero anomalies cannot be inferred without analysis': '분석 자료가 없으면 정상·이상 없음·0건이라고 하지 않고 확인할 수 없다고 쓴다. '
                                                           '아리수 값은 "계량기 상태 정상", "통신 장애·계량기 장애 기록은 조회되지 않았습니다"처럼 쓴다.',
+    'Missing alert stations': '답에 쓴 날짜(날짜가 없으면 조회 기간)의 find_anomalies 주의·경고 행에 나온 역을 사용량 증가·감소와 상관없이 '
+                              '모두 쓰고 그 행의 source_id도 넣는다. 누수 질문이면 증가는 누수 신호로, 감소는 "사용량 감소"로 나눠 쓴다.',
     'Model supplied a link or markup': '답변에 링크나 마크업을 넣지 않는다.',
     'Unverified definitive cause': "원인을 단정하지 말고 후보·가능성으로 쓴다. '확정할 수 없다'처럼 부정문이어도 '확정', '원인은 ~입니다' 표현은 쓰지 않는다. "
                                    '서버가 답 앞에 현장 확인 전에는 원인을 확정할 수 없다는 안내를 붙인다.',
@@ -983,6 +1019,9 @@ def _run(client, message, conversation, deadline, progress=_no_progress):
         '답할 수 있는 만큼 답하고, 아리수 원격검침 자료는 아직 없어 확인하지 못했다고 한 줄 밝힌다. '
         '아리수 누수위험은 아리수 자체 표시값이며 LightGBM 위험도 판정과 다르다. 둘을 섞지 않고, 아리수 값은 항상 "아리수 누수위험 주의", '
         '"계량기 상태 정상"처럼 쓰며 arisu_card_updated_at을 "몇 시 기준"으로 함께 쓴다. '
+        'arisu_in_progress_day가 있으면 그 사용일이 끝나기 전에 받은 값이다. 기준 시각 대신 문장 앞에 '
+        '"2026-10-24 진행 중(2026-10-24 12:01 확인)"처럼 그 사용일과 arisu_checked_at을 쓰고, 실시간 사용량은 하루치가 아니라 '
+        '그날 진행 중인 값이라고 밝힌다. '
         '아리수 건수는 아리수 집계를 인용해 "아리수 누수위험 주의 ○곳"처럼 leak_status_counts(계량기 수)와 match_count를 그대로 쓴다. '
         '기간 안의 통신 장애·계량기 장애는 fault_readings와 fault_status_counts로 답하고, 검침 기록이 없는 날은 "검침 기록 없음"이라고 쓴다. '
         'reading_day_count는 기간 안에 검침 기록이 있는 날 수다. '
@@ -991,7 +1030,10 @@ def _run(client, message, conversation, deadline, progress=_no_progress):
         '전체 아리수 실시간 사용량은 아리수 집계의 realtime_usage_total_ton, realtime_usage_meter_count, top_realtime_usage를 그대로 쓴다. '
         '자료 확인 행의 reason, data_check_since, data_check_days는 자료 확인이 이어진 사유·시작일·일수다. '
         '"값이 멈췄어?", "언제부터?" 질문은 get_station_status의 이 값으로 reason(예: 값 그대로)과 시작일·일수를 그대로 답한다. '
-        '누수가 의심되는 역 질문은 find_anomalies의 사용량 증가 주의·경고와 get_arisu_status의 아리수 누수위험을 함께 조회해 둘을 나눠 답한다. '
+        '누수가 의심되는 역 질문은 find_anomalies의 주의·경고와 get_arisu_status의 아리수 누수위험을 함께 조회해 둘을 나눠 답한다. '
+        '누수 신호는 사용량 증가 주의·경고이며, 사용량 감소 주의·경고도 빼지 않고 "사용량 감소"로 따로 쓴다. '
+        '주의·경고 역을 나열할 때는 답에 쓴 날짜(날짜를 쓰지 않으면 조회 기간)의 find_anomalies 주의·경고 행을 '
+        '증가·감소와 상관없이 모두 쓴다. '
         '업무 요약은 하루 기준이다. 날짜가 없으면 find_anomalies를 날짜 null로 조회해 end_date(최신 자료일)를 확인한 뒤 그날 하루를 다시 조회하고, '
         'get_arisu_status 전체 집계도 조회해 그날 주의·경고·자료 확인 건수와 역, 아리수 누수위험 주의·경고 수, 통신·계량기 장애를 짧게 정리한다. '
         '원인 질문은 사용량 조회와 함께 get_arisu_status로 그날과 전날의 아리수 검침 상태를 확인해, 통신 장애·계량기 장애가 있으면 '
@@ -1029,7 +1071,7 @@ def _run(client, message, conversation, deadline, progress=_no_progress):
         tool_calls = [item for item in output if item.get('type') == 'function_call']
         if not tool_calls:
             try:
-                answer, sources = _validated_answer(response.output_text, kit, route, delivered_ids, primary_ids, primary_groups)
+                answer, sources = _validated_answer(response.output_text, kit, route, delivered_ids, primary_ids, primary_groups, message)
                 notice = _coverage_notice(kit, sources, route)
                 if notice:
                     answer += '\n\n' + notice

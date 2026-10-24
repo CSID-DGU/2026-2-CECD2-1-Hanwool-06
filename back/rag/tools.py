@@ -104,6 +104,14 @@ def _stamp(value):
     return f'{match[1]} {match[2]}'
 
 
+def _progress_day(stamp, checked):
+    """아리수는 그날 사용분을 하루 중간에도 보내며 시각을 그날이 끝나는 때(다음 날 00:00)로 붙인다.
+    확인한 시각보다 뒤인 시각은 아직 오지 않은 때라 기준 시각이 아니다. 그 값이 속한 사용일(00:00이면 전날)을 돌려준다."""
+    if not stamp or not checked or stamp <= checked:
+        return None
+    return Date.fromordinal(_day(stamp[:10]).toordinal() - (stamp[11:] == '00:00')).isoformat()
+
+
 def _text(value, limit):
     """원문 상태 문구는 한 줄로 줄이고 길이를 자른다. 비어 있으면 None."""
     if not isinstance(value, str):
@@ -676,7 +684,8 @@ class ChatTools:
             if value is not None:
                 _day(value)
         # 검침 날짜는 사용일이다(10-24 00:00 검침이 10-23 사용분). 카드 갱신일은 검침 기록이 없을 때만 기준으로 쓴다.
-        stamps = [_stamp(card.get('updated_at')) for _, card, _ in entries]
+        stamps = [_progress_day(_stamp(card.get('updated_at')), _stamp(card.get('collected_at'))) or _stamp(card.get('updated_at'))
+                  for _, card, _ in entries]
         last = max((r['date'] for _, _, readings in entries for r in readings), default=None) \
             or max((s[:10] for s in stamps if s), default=None)
         end = end_date or last
@@ -707,12 +716,17 @@ class ChatTools:
                 faults += len(unusual)
                 fault_days.update(r['date'] for r in unusual)
                 fault_stations.add(meter['station_id'])
+            # 확인한 시각보다 뒤인 카드·검침 시각은 기준 시각으로 내지 않고, 그 사용일이 진행 중이라고 알린다.
+            checked, updated = _stamp(card.get('collected_at')), _stamp(card.get('updated_at'))
+            measured = latest['measured_at'] if latest else None
+            card_day, reading_day = _progress_day(updated, checked), _progress_day(measured, checked)
             pairs.append((meter, self._meter_info(meter) | {
                 'arisu_leak_status': leak or '표시 없음', 'arisu_realtime_usage_ton': usage,
                 'arisu_meter_status': state or '정보 없음',
-                'arisu_card_updated_at': _stamp(card.get('updated_at')), 'arisu_checked_at': _stamp(card.get('collected_at')),
+                'arisu_card_updated_at': None if card_day else updated, 'arisu_checked_at': checked,
+                'arisu_in_progress_day': card_day or reading_day,
                 'arisu_last_reading_date': latest['date'] if latest else None,
-                'arisu_last_measured_at': latest['measured_at'] if latest else None,
+                'arisu_last_measured_at': None if reading_day else measured,
                 'arisu_notice': self._clean(notice) if notice and notice != fault else None,
                 'readings_first_date': readings[0]['date'] if readings else None,
                 'start_date': start, 'end_date': end,   # 아래 검침 기록·장애는 이 기간의 값이다
@@ -734,12 +748,15 @@ class ChatTools:
             longest['fault_readings'].pop(0)
         for (meter, _), row in zip(pairs, rows):
             summary = f"아리수 누수위험 {row['arisu_leak_status']}, 계량기 상태 {row['arisu_meter_status']}"
-            if row['arisu_card_updated_at']:
+            if row['arisu_in_progress_day']:
+                summary += f", {row['arisu_in_progress_day']} 진행 중({row['arisu_checked_at']} 확인)"
+            elif row['arisu_card_updated_at']:
                 summary += f", {row['arisu_card_updated_at']} 기준"
             row['source_id'] = self._source(f"{meter['display_name']} 아리수 원격검침", 'arisu', dict(row), meter=meter,
                                             day=row['arisu_last_reading_date'] or end, key=('arisu', meter['id'], start, end), summary=summary)
         checked = [row['arisu_checked_at'] for _, row in pairs if row['arisu_checked_at']]
         updated = [row['arisu_card_updated_at'] for _, row in pairs if row['arisu_card_updated_at']]
+        progress = [row['arisu_in_progress_day'] for _, row in pairs if row['arisu_in_progress_day']]
         firsts = [row['readings_first_date'] for _, row in pairs if row['readings_first_date']]
         # 표시 행은 20개까지라 전체 질문은 이 합계와 상위 5개로 답한다.
         usages = sorted((row for _, row in pairs if row['arisu_realtime_usage_ton'] is not None),
@@ -766,9 +783,11 @@ class ChatTools:
                    'count_unit': '아리수 검침 장애(통신 장애·계량기 장애)의 계량기-사용일 건수',
                    'realtime_usage_total_ton': round(fsum(row['arisu_realtime_usage_ton'] for row in usages), 3) if usages else None,
                    'realtime_usage_meter_count': len(usages),
-                   'top_realtime_usage': [{key: row[key] for key in ('station', 'line', 'label', 'arisu_realtime_usage_ton', 'arisu_card_updated_at')}
+                   'top_realtime_usage': [{key: row[key] for key in ('station', 'line', 'label', 'arisu_realtime_usage_ton',
+                                                                     'arisu_card_updated_at', 'arisu_in_progress_day')}
                                           for row in usages[:5]],
                    'card_updated_at_first': min(updated, default=None), 'card_updated_at_last': max(updated, default=None),
+                   'in_progress_day': max(progress, default=None), 'in_progress_meter_count': len(progress),
                    'checked_at_last': max(checked, default=None), 'readings_first_date': min(firsts, default=None), 'note': ARISU_NOTE}
         summary['source_id'] = self._source(f'{start}~{end} 아리수 원격검침 집계', 'query', dict(summary), day=end,
                                             key=('arisu_summary', tuple(m['id'] for m in meters), start, end),

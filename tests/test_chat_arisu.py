@@ -65,6 +65,7 @@ class ArisuToolTest(unittest.TestCase):
         row = out['meters'][0]
         self.assertEqual((row['arisu_leak_status'], row['arisu_realtime_usage_ton'], row['arisu_meter_status']), ('주의', 6.0, '정상'))
         self.assertEqual((row['arisu_card_updated_at'], row['arisu_checked_at']), ('2026-10-24 00:00', '2026-10-24 12:00'))
+        self.assertIsNone(row['arisu_in_progress_day'])   # 지난 자정 검침은 그대로 기준 시각이다
         self.assertEqual(row['fault_readings'], [{'date': '2026-10-22', 'status': '통신 장애'}])
         summary = out['summary']
         # 기본 기간은 마지막 검침 사용일(10-23)까지 7일이다. 카드 갱신일(10-24)로 하루 밀리지 않는다.
@@ -82,6 +83,22 @@ class ArisuToolTest(unittest.TestCase):
         self.assertEqual(self.arisu(station='서부역')['code'], 'not_found')
         quiet = self.arisu(station='동부역', start_date='2026-10-23', end_date='2026-10-23')
         self.assertEqual((quiet['summary']['match_count'], quiet['meters'][0]['fault_readings']), (0, []))
+
+    def test_a_time_after_the_check_is_the_day_in_progress_not_a_basis_time(self):
+        # 운영 사례: 10-24 12:00 확인에 아리수가 그날 사용분(하루치가 아님)을 '10-25 00:00'으로 붙여 보냈다
+        today = {'date': '2026-10-24', 'measured_at': '2026-10-25 00:00', 'status': '정상'}
+        card = CARD | {'updated_at': '2026-10-25 00:00', 'realtime_usage': 9.0, 'readings': CARD['readings'] + [today]}
+        self.fake.objects['prod/arisu/index.json'] = encoded(index(**{'000000001': card}))
+        out = self.arisu(station='동부역')
+        row = out['meters'][0]
+        self.assertEqual((row['arisu_card_updated_at'], row['arisu_last_measured_at'], row['arisu_in_progress_day']), (None, None, '2026-10-24'))
+        self.assertEqual((row['arisu_checked_at'], row['arisu_last_reading_date'], row['arisu_realtime_usage_ton']), ('2026-10-24 12:00', '2026-10-24', 9.0))
+        self.assertNotIn('2026-10-25', json.dumps(out, ensure_ascii=False))   # 아직 오지 않은 시각은 모델에 가지 않는다
+        summary = out['summary']
+        self.assertEqual((summary['in_progress_day'], summary['in_progress_meter_count'], summary['card_updated_at_last']), ('2026-10-24', 1, None))
+        self.assertEqual(summary['top_realtime_usage'][0]['arisu_in_progress_day'], '2026-10-24')
+        source = next(s for s in self.tools.sources if s['id'] == row['source_id'])
+        self.assertTrue(source['summary'].endswith('2026-10-24 진행 중(2026-10-24 12:00 확인)'))
 
     def test_billing_only_station_says_so_instead_of_a_missing_date(self):
         self.fake.objects['prod/arisu/index.json'] = encoded(index(**{'000000001': CARD}))
@@ -239,6 +256,15 @@ class ArisuAnswerTest(unittest.TestCase):
                 self.check(wrong, {'s1': arisu, 's2': model}, ['s1', 's2'])
         with self.assertRaises(ValueError):   # 아리수 근거 없이 '주의'는 LightGBM 판정으로 검사된다
             self.check('동부역 판정은 주의입니다.', {'s2': model}, ['s2'])
+
+    def test_a_day_in_progress_is_written_with_its_day_and_check_time(self):
+        arisu = {'station': '동부역', 'arisu_leak_status': '주의', 'arisu_meter_status': '정상', 'arisu_card_updated_at': None,
+                 'arisu_in_progress_day': '2026-10-24', 'arisu_checked_at': '2026-10-24 12:01', 'arisu_realtime_usage_ton': 9.0}
+        text = ('2026-10-24 진행 중(2026-10-24 12:01 확인), 동부역은 아리수 누수위험 주의이고 계량기 상태 정상입니다. '
+                '실시간 사용량 9톤은 하루치가 아니라 그날 진행 중인 값입니다.')
+        self.assertEqual(self.check(text, {'s1': arisu}, ['s1']), text)
+        with self.assertRaises(ValueError):   # 아직 오지 않은 시각은 근거에 없어 쓸 수 없다
+            self.check('2026-10-25 00:00 기준, 동부역은 아리수 누수위험 주의입니다.', {'s1': arisu}, ['s1'])
 
     def test_arisu_wording_cannot_hide_model_labels_or_counts(self):
         # 보안 검토에서 찾은 우회: 아리수 표현 뒤에 LightGBM 판정·건수를 붙여 검사를 피하던 답
@@ -518,6 +544,54 @@ class ArisuAnswerTest(unittest.TestCase):
                                              chat_agent.Route(**route(intent='ANOMALY_SEARCH', date=None)))
         self.assertEqual(notice.count('자료 범위 안내'), 2)
         self.assertIn('유효한 분석 자료가 없어', notice)
+
+
+class AlertListTest(unittest.TestCase):
+    """주의·경고 역을 나열한 답은 그날의 주의·경고 역을 증가·감소와 상관없이 모두 써야 한다.
+    운영 사례: '정상이 아닌 곳' 질문에 10-23 경고(안국역)만 쓰고 사용량이 줄어든 주의 두 곳을 뺐다."""
+    ROWS = [{'station': '안국역', 'date': '2026-10-23', 'severity': '경고', 'deviation_direction': '증가', 'actual_ton': 48.0},
+            {'station': '석촌역', 'date': '2026-10-23', 'severity': '주의', 'deviation_direction': '감소', 'actual_ton': 3.0},
+            {'station': '잠실새내역', 'date': '2026-10-23', 'severity': '주의', 'deviation_direction': '감소', 'actual_ton': 22.0},
+            {'station': '삼각지역', 'date': '2026-10-23', 'severity': '자료 확인', 'deviation_direction': None, 'actual_ton': 0.0},
+            {'station': '온수역', 'date': '2026-10-22', 'severity': '경고', 'deviation_direction': '증가', 'actual_ton': 30.0}]
+
+    def check(self, text, message='지금 아리수 실시간 누수 위험이 정상이 아닌곳', **changes):
+        aggregate = {'start_date': '2026-10-17', 'end_date': '2026-10-23', 'period_days': 7,
+                     'severity_counts': {'정상': 60, '주의': 2, '경고': 2, '자료 확인': 1},
+                     'counts': {'주의': 2, '경고': 2, '자료 확인': 1}, 'match_count': 5, 'truncated': False, 'rows': self.ROWS} | changes
+        kit = SimpleNamespace(sources=[{'id': 's1', 'label': 's1', 'kind': 'query'}], evidence={'s1': aggregate},
+                              station_names=('안국역', '석촌역', '잠실새내역', '삼각지역', '온수역'))
+        raw = json.dumps({'answer': text, 'source_ids': ['s1'], 'is_hypothesis': False}, ensure_ascii=False)
+        return chat_agent._validated_answer(raw, kit, chat_agent.Route(**route(intent='ANOMALY_SEARCH', station=None, date=None)),
+                                            message=message)[0]
+
+    def test_the_day_named_needs_every_alert_station_up_or_down(self):
+        for text in ('2026-10-23에는 안국역이 LightGBM 경고로 조회됐습니다. 사용량은 48톤입니다.',
+                     '최신 자료일인 2026-10-23의 LightGBM 판정에서 사용량 증가 경고는 안국역입니다.',
+                     '2026-10-23 경고는 안국역, 주의는 석촌역입니다.'):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'Missing alert stations'):
+                self.check(text)
+        full = '2026-10-23 LightGBM 판정은 안국역 경고(사용량 증가), 석촌역·잠실새내역 주의(사용량 감소)입니다.'
+        self.assertEqual(self.check(full), full)   # 그 전날(온수역)은 답에 쓴 날이 아니라 보지 않는다
+        self.assertIn('증가·감소', chat_agent._repair_note(ValueError('Missing alert stations')))
+
+    def test_a_question_about_one_label_or_one_direction_needs_only_those(self):
+        self.check('2026-10-23 경고는 안국역입니다.', message='경고가 나온 역 알려줘')
+        self.check('2026-10-23 사용량 증가 경고는 안국역입니다.', message='사용량이 늘어난 역 알려줘')
+        with self.assertRaisesRegex(ValueError, 'Missing alert stations'):
+            self.check('2026-10-23 사용량 감소 주의는 석촌역입니다.', message='사용량이 줄어든 역은?')
+        self.check('2026-10-23에 LightGBM 주의·경고 판정이 있었습니다.')   # 역을 나열하지 않은 답은 건수 검사가 맡는다
+
+    def test_a_period_or_no_date_needs_the_whole_lookup_except_a_cut_oldest_day(self):
+        for text in ('2026-10-17~2026-10-23 동안 경고는 안국역입니다.', '최근 7일 동안 경고는 안국역입니다.'):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, 'Missing alert stations'):
+                self.check(text, message='최근 경고 나온 역')
+        self.check('최근 7일 동안 경고는 안국역과 온수역입니다.', message='최근 경고 나온 역')
+        # 실제 모델 답: 기간은 건수로 말하고, 따로 쓴 날짜(10-23)의 역만 나열했다. 그날 역을 다 썼으니 통과한다.
+        self.check('최근 7일(2026-10-17~2026-10-23) 판정은 주의 2건, 경고 2건입니다. '
+                   '최신 분석일인 2026-10-23에는 안국역 경고, 석촌역·잠실새내역 주의입니다.', message='최근 누수 의심되는 역 있어?')
+        # 상세가 잘린 조회는 가장 오래된 날(10-22)이 일부만 왔을 수 있어 그날은 보지 않는다
+        self.check('2026-10-17~2026-10-23 동안 경고는 안국역입니다.', message='최근 경고 나온 역', truncated=True)
 
 
 class ArisuLoopTest(unittest.TestCase):

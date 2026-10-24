@@ -18,15 +18,20 @@ test("Arisu status carries its own time: card update for leak risk and usage, la
     { date: "2026-10-22", measured_at: "2026-10-23 00:00", status: "통신 장애" },
     { date: "2026-10-23", measured_at: "2026-10-24 00:00", status: "정상" },
   ] };
-  assert.deepEqual(arisuNow(arisu), { leak: { text: "주의", tone: "warn" }, cardAt: "10/24 00:00", usage: 0,
+  assert.deepEqual(arisuNow(arisu), { leak: { text: "주의", tone: "warn" }, cardAt: "10/24 00:00", progressDay: "", usage: 0,
     meter: { text: "정상", tone: "ok" }, meterAt: "10/24 00:00", checkedAt: "10/24 12:00" });
+  // Arisu sends the day in progress with the time that day ends (12:00 check, "10-25 00:00"): that is not a basis time yet.
+  const today = { date: "2026-10-24", measured_at: "2026-10-25 00:00", status: "정상" };
+  const progress = arisuNow({ ...arisu, updated_at: "2026-10-25 00:00", realtime_usage: 9, readings: [...arisu.readings, today] });
+  assert.deepEqual([progress.cardAt, progress.progressDay, progress.usage, progress.meterAt, progress.checkedAt], ["", "10/24", 9, "", "10/24 12:00"]);
+  assert.equal(arisuNow({ ...arisu, collected_at: "2026-10-25T00:20:00+09:00", updated_at: "2026-10-25 00:00" }).progressDay, "");
   // A card replaced by a fault notice: the notice is the meter status, and neither leak risk nor usage is guessed.
   const notice = "계량기 장애로 인해 원격검침 정보를 제공할 수 없습니다.";
   const fault = arisuNow({ ...arisu, leak_status: null, meter_status: notice, notice, realtime_usage: null, updated_at: null });
   assert.deepEqual([fault.leak.text, fault.usage, fault.meter, fault.meterAt], ["—", null, { text: notice, tone: "alert" }, ""]);
   assert.equal(arisuNow({ notice: "원격검침 데이터가 없습니다." }).leak.text, "원격검침 데이터가 없습니다.");
   for (const realtime_usage of [undefined, "4", NaN, Infinity]) assert.equal(arisuNow({ realtime_usage }).usage, null);
-  assert.deepEqual(arisuNow(undefined), { leak: { text: "—", tone: "unknown" }, cardAt: "", usage: null, meter: { text: "—", tone: "unknown" }, meterAt: "", checkedAt: "" });
+  assert.deepEqual(arisuNow(undefined), { leak: { text: "—", tone: "unknown" }, cardAt: "", progressDay: "", usage: null, meter: { text: "—", tone: "unknown" }, meterAt: "", checkedAt: "" });
   for (const value of [null, undefined, "", "2026-10-24", "10/24 00:00", 123]) assert.equal(arisuTime(value), "");
 });
 
@@ -67,6 +72,9 @@ test("detail opens on the last verdict, keeps warnings, and shows Arisu status i
       ["실시간 사용량", "4 톤"],
       ["계량기 상태", '<span class="dt-arisu-value is-ok">정상</span>'],
     ] });
+    const today = { date: "2026-10-24", measured_at: "2026-10-25 00:00", status: "정상" };
+    const inProgress = render(undefined, { ...data, arisu: { a: { ...data.arisu.a, updated_at: "2026-10-25 00:00", readings: [...data.arisu.a.readings, today] } } });
+    assert.equal(arisuCard(inProgress).right, "10/24 진행 중, 10/24 12:00 확인");   // never "10/25 00:00 기준" before that time comes
     assert.equal((current.match(/실시간 사용량/g) || []).length, 1);
     assert.ok(current.indexOf("아리수 원격검침(실시간)") < current.indexOf("<h2>위험도</h2>"));
     assert.match(current, /class="dt-cal-day is-warn" aria-pressed="true" aria-label="10월 23일 주의"/);

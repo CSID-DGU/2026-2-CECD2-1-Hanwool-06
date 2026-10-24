@@ -148,16 +148,30 @@ export function arisuStatus(value) {
   return { text: text || "—", tone: ({ 안전: "ok", 정상: "ok", 주의: "warn", 경고: "alert" })[text] || "unknown" };
 }
 
+const localStamp = (value) => /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.exec(typeof value === "string" ? value : "")?.[0].replace("T", " ") || "";
+// 아리수는 그날 사용분을 하루 중간에도 보내며 시각을 그날이 끝나는 때(다음 날 00:00)로 붙인다.
+// 확인한 시각보다 뒤인 시각은 아직 오지 않은 때라 기준 시각이 아니다. 그 사용일(00:00이면 전날)을 "10/24"로 돌려준다.
+function arisuProgressDay(value, checked) {
+  const stamp = localStamp(value);
+  if (!stamp || !checked || stamp <= checked) return "";
+  const day = new Date(`${stamp.slice(0, 10)}T00:00:00Z`);
+  if (stamp.endsWith("00:00")) day.setUTCDate(day.getUTCDate() - 1);
+  return `${day.getUTCMonth() + 1}/${day.getUTCDate()}`;
+}
+
 // 아리수가 보여 주는 지금 상태. 누수위험·실시간 사용량은 카드 갱신 시각, 계량기 상태는 마지막 검침 시각이 기준이다.
-// 카드가 장애 문구로 바뀌었으면 그 문구가 계량기 상태다. 실시간 사용량은 자정 검침이면 대개 전날 확정 사용량과 같다.
+// 카드가 장애 문구로 바뀌었으면 그 문구가 계량기 상태다. 실시간 사용량은 자정 검침이면 대개 전날 확정 사용량과 같고,
+// 그날 진행 중인 카드(progressDay)면 그날 지금까지의 값이다.
 export function arisuNow(arisu) {
   const fault = arisu?.meter_status;
   const reading = arisu?.readings?.at(-1);
-  const cardAt = arisuTime(arisu?.updated_at);
+  const checked = localStamp(arisu?.collected_at);
+  const cardDay = arisuProgressDay(arisu?.updated_at, checked), readingDay = arisuProgressDay(reading?.measured_at, checked);
+  const cardAt = cardDay ? "" : arisuTime(arisu?.updated_at);
   return {
-    leak: arisuStatus(arisu?.leak_status || (fault ? "" : arisu?.notice)), cardAt,
+    leak: arisuStatus(arisu?.leak_status || (fault ? "" : arisu?.notice)), cardAt, progressDay: cardDay || readingDay,
     usage: Number.isFinite(arisu?.realtime_usage) ? arisu.realtime_usage : null,
-    meter: arisuStatus(fault || reading?.status), meterAt: fault ? cardAt : arisuTime(reading?.measured_at),
+    meter: arisuStatus(fault || reading?.status), meterAt: fault ? cardAt : readingDay ? "" : arisuTime(reading?.measured_at),
     checkedAt: arisuTime(arisu?.collected_at),
   };
 }
