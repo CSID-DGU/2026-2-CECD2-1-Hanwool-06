@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from back.ml.lightgbm import metric, utils
+from back.ml.lightgbm import dataset, metric, utils
 from back.ml.lightgbm.main import run
 from back.pipelines.refresh import build_calendar
 from back.scripts.dataset_etl.build_clean_dataset import build_bills_bimonthly
@@ -61,6 +61,27 @@ class ModelDataTest(unittest.TestCase):
         summary = metric.summarize(scored, ordinary)
         self.assertEqual((summary['n_ordinary_days'], summary['mae_ordinary_days'], scored.loc[20, '심각도']), (39, 0.0, '경고'))
 
+    def test_alert_days_borrow_the_same_weekday_before_the_run_and_long_runs_become_the_new_normal(self):
+        days = pd.date_range('2026-09-01', periods=35)
+        usage = np.array([10. + day.weekday() for day in days])   # each weekday has its own usual amount
+        usage[[16, 17, 18, 23]] = 1.                                # an alert run, and an alert a week after its first day
+        frame = pd.concat([pd.DataFrame({'고객번호': ['000000001'] * 35, '날짜': days, '일사용량_톤': usage}),
+                           pd.DataFrame({'고객번호': ['000000002'] * 3, '날짜': days[-3:], '일사용량_톤': [5., 1., 5.]})],
+                          ignore_index=True)
+        rows = np.r_[np.arange(14, 35), [35, 36, 37]]
+        alert = np.isin(rows, [16, 17, 18, 23, 36])
+        predicted = np.arange(len(rows), dtype=float) + 100
+        filled = dataset.fill_alert_days(frame, rows, alert, predicted, max_run=14)['일사용량_톤'].to_numpy()
+        expected = usage.copy()
+        expected[[16, 17, 18]] = usage[[9, 10, 11]]   # the same weekday a week before
+        expected[23] = usage[9]                        # its week before was filled too: back to the usual amount
+        self.assertTrue(np.array_equal(filled[:35], expected))
+        self.assertEqual(filled[36], predicted[list(rows).index(36)])   # no earlier week within four: the day's prediction
+        self.assertEqual((filled[35], filled[37]), (5., 5.))           # a day that is not an alert stays as measured
+        self.assertEqual(frame.loc[36, '일사용량_톤'], 1.)              # the input is left as it was
+        capped = dataset.fill_alert_days(frame, rows, alert, predicted, max_run=2)['일사용량_톤'].to_numpy()
+        self.assertEqual((capped[16], capped[17], capped[18]), (usage[9], usage[10], 1.))   # a longer run is the new normal
+
     def test_pipeline_runs_end_to_end_on_a_small_dataset(self):
         rng = np.random.default_rng(0)
         days = pd.date_range('2025-01-01', periods=160)
@@ -68,6 +89,8 @@ class ModelDataTest(unittest.TestCase):
             '고객번호': f'{meter:09d}', '날짜': day.strftime('%Y-%m-%d'), '총승객수': 1000. * meter,
             '일사용량_톤': float(max(0, round(10 * meter * (1.2 if day.weekday() < 5 else 0.8) + rng.normal(0, 2)))),
             '역명': f'역{meter}', '사업소명': '사업소', '고지서_성명': f'역{meter}'} for meter in range(1, 9) for day in days])
+        drop = (frame['고객번호'] == '000000008') & frame['날짜'].between('2025-05-25', '2025-05-28')
+        frame.loc[drop, '일사용량_톤'] = 0.   # four days far below the usual amount, then back
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             parts = {'train': frame['날짜'] <= '2025-04-30', 'test': frame['날짜'] > '2025-05-20'}
@@ -95,6 +118,11 @@ class ModelDataTest(unittest.TestCase):
             self.assertLess((anomalies.loc[spare, '일사용량_톤'] - anomalies.loc[spare, 'predicted_ton']).abs().mean(), 0.5 * anomalies['일사용량_톤'].mean())
             for name in ('model.txt', 'model_without_ridership.txt'):
                 self.assertTrue((tmp / 'out' / name).read_text().startswith('tree'))
+            # the alert days of the drop are filled from the week before and the verdicts are scored again
+            fill = metrics['alert_fill']
+            self.assertTrue(fill['max_days'] == 14 and 1 <= fill['passes'] <= 8 and fill['filled_days'] > 0)
+            dropped = anomalies[(anomalies['고객번호'] == 8) & anomalies['날짜'].between('2025-05-25', '2025-05-28')]
+            self.assertTrue((dropped['심각도'] == '경고').all())
 
     def test_bill_baseline_preserves_missing_usage_and_counts_distinct_months(self):
         labels = pd.DataFrame([{'고객번호': '000000001', '역명': '가역'}])

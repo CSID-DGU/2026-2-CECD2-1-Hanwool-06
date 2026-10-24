@@ -1,8 +1,13 @@
 [Unit]
-Description=Run water-storage daily at 14:00 KST
+Description=Run water-storage at 00:15, 12:15, 14:00 and 18:15 KST
 
 [Timer]
+# 채팅은 버킷 사본을 읽으므로 아리수 상태 확인(00·12·18시)이 끝나면 15분 뒤 올린다.
+# 08시 확인분은 08:05 갱신이 끝나면 water-refresh의 OnSuccess가 올린다. 14:00은 하루 한 번 정기 보관이다.
+OnCalendar=*-*-* 00:15:00 Asia/Seoul
+OnCalendar=*-*-* 12:15:00 Asia/Seoul
 OnCalendar=*-*-* 14:00:00 Asia/Seoul
+OnCalendar=*-*-* 18:15:00 Asia/Seoul
 Persistent=true
 
 [Install]

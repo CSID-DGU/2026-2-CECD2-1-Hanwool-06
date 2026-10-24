@@ -38,12 +38,13 @@ class PreparedData:
     categorical_cols: list[str]
 
 
-def prepare_data(cfg: dict, fit_splits: tuple[str, ...]) -> PreparedData:
+def prepare_data(cfg: dict, fit_splits: tuple[str, ...], frame: pd.DataFrame | None = None) -> PreparedData:
     """CSV 로딩부터 피처 생성까지 한 번에 수행한다.
 
     fit_splits : 학습에 허용된 과거 구간. 검증모델은 ("train",), 최종모델은 ("train","valid").
+    frame      : 이미 읽은 load_splits 결과. 경고인 날을 바꾼 사본으로 과거값 피처를 다시 만들 때 준다.
     """
-    df = _load_splits(cfg)
+    df = load_splits(cfg) if frame is None else frame.copy()
     df = _merge_calendar(df, cfg)
     df = _merge_bill_baseline(df, cfg)
     df = _add_calendar_cycle_features(df)
@@ -114,7 +115,39 @@ def split_features(prepared: PreparedData, split: str) -> pd.DataFrame:
     return prepared.frame.loc[prepared.frame["split"] == split, prepared.feature_cols].reset_index(drop=True)
 
 
-def _load_splits(cfg: dict) -> pd.DataFrame:
+def fill_alert_days(frame: pd.DataFrame, rows: np.ndarray, alert: np.ndarray, predicted: np.ndarray,
+                    max_run: int) -> pd.DataFrame:
+    """경고인 날의 사용량을 지난주 같은 요일 값으로 바꾼 사본. 그 뒤 날들의 과거값 피처를 다시 만들 때만 쓴다.
+
+    경고가 이어지면 최근 7일 중앙값과 며칠 전 사용량이 이상한 값을 따라가, 이어지는 동안은 정상으로,
+    원래대로 돌아온 날은 이상으로 보게 된다. 경고인 날은 그 자리를 지난주 같은 요일 값(그날도 바꾼 날이면
+    바꾼 값, 없으면 2~4주 전)으로 채워 요일을 맞춘 채 이상 전 수준을 잇는다. 4주 안에 없으면 그날 예측을 쓴다.
+    주의인 날은 그대로 둔다. 한 계량기의 경고가 max_run 일보다 길게 이어지면 새 평소로 보고 더 바꾸지 않는다.
+
+    rows      : frame 안에서 판정한 행의 위치(역·날짜순)
+    alert     : rows 와 같은 순서의 경고 여부
+    predicted : rows 와 같은 순서의 예측(톤)
+    """
+    values = frame[TARGET].to_numpy(dtype=float).copy()
+    meters = frame["고객번호"].to_numpy()
+    days = frame["날짜"].to_numpy(dtype="datetime64[D]")
+    position = {key: i for i, key in enumerate(zip(meters, days))}
+    week = np.timedelta64(7, "D")
+    run, previous = 0, None
+    for k, row in enumerate(rows):
+        run = run + 1 if alert[k] and meters[row] == previous else int(alert[k])
+        previous = meters[row]
+        if not alert[k] or run > max_run:
+            continue
+        earlier = next((position[key] for weeks in range(1, 5)
+                        if (key := (meters[row], days[row] - weeks * week)) in position), None)
+        values[row] = values[earlier] if earlier is not None else predicted[k]
+    out = frame.copy()
+    out[TARGET] = values
+    return out
+
+
+def load_splits(cfg: dict) -> pd.DataFrame:
     """train/valid/test CSV 를 구간 표시(split)와 함께 합친다(중복 제거 + 역·날짜순 정렬).
 
     과거값 참조 피처가 구간 경계를 넘나들 수 있도록 따로 계산하지 않고 합쳐서 만든다.

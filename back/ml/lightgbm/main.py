@@ -4,8 +4,8 @@
   conda run -n hanul python back/ml/lightgbm/main.py
 
 흐름:
-  [1/2] 검증모델  train -> valid : valid 잔차로 역별 척도와 이상탐지 임계값(q95/q99) 확정
-  [2/2] 최종모델  train+valid -> test : 재학습 후 후처리 → 이상탐지 → 결과/그림 저장
+  [1/2] 검증모델  train -> valid : valid 잔차로 역별 척도와 이상탐지 임계값(주의 q97/경고 q99) 확정
+  [2/2] 최종모델  train+valid -> test : 재학습 후 후처리 → 이상탐지 → 경고 날 채워 다시 판정 → 결과/그림 저장
   두 단계 모두 승하차를 쓰는 본 모델과 승하차 없이 배우는 보조 모델을 함께 학습하고,
   당일·전날 승하차가 아직 없는 날(월별 파일이 나오기 전의 최근 날짜)은 보조 모델로 판정한다.
 
@@ -72,7 +72,7 @@ def run(config_path: Path | None = None, out_dir: Path | None = None) -> dict:
     cfg = utils.load_config(config_path or HERE / "config.yaml")
     utils.set_seed(int(cfg["seed"]))
     results_dir = utils.ensure_dir(out_dir or cfg.get("output_dir") or HERE.parents[2] / "data" / "runtime" / "model")
-    warn_q = float(cfg["anomaly"]["warn_quantile"])    # 주의 분위수 (상위 5%)
+    warn_q = float(cfg["anomaly"]["warn_quantile"])    # 주의 분위수 (상위 3%)
     alert_q = float(cfg["anomaly"]["alert_quantile"])  # 경고 분위수 (상위 1%)
 
     # [1/2] 검증모델: train 으로 학습, valid 로 역별 척도와 임계값 산출
@@ -120,6 +120,31 @@ def run(config_path: Path | None = None, out_dir: Path | None = None) -> dict:
         raise ValueError("Model returned incomplete or non-finite predictions")
     test_anomalies = metric.classify(metric.score_predictions(test_meta, test_pred, calibration, test_level),
                                      warn_t, alert_t)
+    # 경고인 날은 그 뒤 날들의 과거값에서 지난주 같은 요일 값으로 바꿔 다시 판정한다. 바뀐 경고로 되풀이한다.
+    fill_days = int(cfg["anomaly"].get("alert_fill_days", 0))
+    fill_passes = int(cfg["anomaly"].get("alert_fill_passes", 0))
+    alert_fill = {"max_days": fill_days, "passes": 0, "filled_days": 0, "changed_in_last_pass": 0}
+    if fill_days > 0 and fill_passes > 0:
+        loaded = dataset.load_splits(cfg)
+        rows = np.flatnonzero((loaded["split"] == "test").to_numpy())
+        for _ in range(fill_passes):
+            alert = (test_anomalies["심각도"] == "경고").to_numpy()
+            filled = dataset.fill_alert_days(loaded, rows, alert, test_anomalies["predicted_ton"].to_numpy(), fill_days)
+            X_filled = dataset.split_features(dataset.prepare_data(cfg, ("train", "valid"), frame=filled), "test")
+            test_level = dataset.recent_level(X_filled, 28)
+            test_pred_raw, without_ridership = _predict(final_models, X_filled)
+            test_pred = utils.postprocess_predictions(test_meta, test_pred_raw, test_level, cfg)
+            if not np.isfinite(test_pred).all() or len(test_pred) != len(test_meta):
+                raise ValueError("Model returned incomplete or non-finite predictions")
+            test_anomalies = metric.classify(metric.score_predictions(test_meta, test_pred, calibration, test_level),
+                                             warn_t, alert_t)
+            changed = int(((test_anomalies["심각도"] == "경고").to_numpy() != alert).sum())
+            alert_fill.update(passes=alert_fill["passes"] + 1, changed_in_last_pass=changed,
+                              filled_days=int((filled[dataset.TARGET].to_numpy()[rows] != loaded[dataset.TARGET].to_numpy()[rows]).sum()))
+            if not changed:
+                break
+        print(f"  경고 날 지난주 요일 채우기: {alert_fill['passes']}회, 바꾼 날 {alert_fill['filled_days']}, "
+              f"마지막 회차에 바뀐 경고 {alert_fill['changed_in_last_pass']}")
     test_anomalies.insert(5, "predicted_ton_before_adjust", np.asarray(test_pred_raw, dtype=float).round(3))
     test_anomalies["without_ridership"] = without_ridership   # 승하차 없이 판정한 날(아직 수집 전인 최근 날짜)
     test_rows = (final_data.frame["split"] == "test").to_numpy()
@@ -135,6 +160,7 @@ def run(config_path: Path | None = None, out_dir: Path | None = None) -> dict:
         "n_estimators": int(cfg["model"]["n_estimators"]),
         "warn_threshold": warn_t,
         "alert_threshold": alert_t,
+        "alert_fill": alert_fill,
         "train_rows_for_valid_model": int(train_mask.sum()),
         "train_rows_for_final_model": int(final_mask.sum()),
         "test_rows_without_ridership": int(without_ridership.sum()),

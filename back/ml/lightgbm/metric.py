@@ -5,9 +5,9 @@
        deviation_score = (오차 ÷ 그 역의 최근 수준) / 역별 척도(1.4826 × 중앙값절대편차)
        → 톤이 아니라 최근 수준 대비 비율로 재므로 사용량이 많은 여름에 주의·경고가 덩달아 늘지 않는다.
        → 평균/표준편차 대신 '중앙값' 기준이라 극단치 몇 개에 흔들리지 않는다.
-  2) score_quantiles : 기준 분포(보통 valid)의 |deviation_score| 에서 q95/q99 임계값을 구한다.
+  2) score_quantiles : 기준 분포(보통 valid)의 |deviation_score| 에서 주의 q97/경고 q99 임계값을 구한다.
   3) classify : 그 임계값으로 정상/주의/경고 + 방향(과다/과소)을 매긴다.
-  → valid 의 q95/q99 를 test 에도 그대로 적용하면, test 가 실제로 더 이상할 때
+  → valid 의 q97/q99 를 test 에도 그대로 적용하면, test 가 실제로 더 이상할 때
     경고가 1% 보다 많이 잡혀 '이상 정도'를 반영한다.
 """
 
@@ -81,7 +81,7 @@ def score_predictions(meta: pd.DataFrame, predicted_ton: np.ndarray, calibration
 
 
 def score_quantiles(deviation_score: pd.Series, warn_q: float, alert_q: float) -> tuple[float, float]:
-    """|deviation_score| 분포에서 주의/경고 임계값을 분위수로 구한다 (예: warn_q=0.95, alert_q=0.99)."""
+    """|deviation_score| 분포에서 주의/경고 임계값을 분위수로 구한다 (예: warn_q=0.97, alert_q=0.99)."""
     abs_score = deviation_score.abs()
     abs_score = abs_score[np.isfinite(abs_score)]
     if abs_score.empty:

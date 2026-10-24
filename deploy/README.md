@@ -9,8 +9,8 @@ NCP 운영 서버(`water-prod`, Ubuntu 24.04)에 실제로 깔려 있는 설정 
 | 00:00, 12:00, 18:00 | 웹 서버(`water-monitor.service`) 안의 수집기 | 아리수 누수위험·계량기 상태만 확인(스마트검침 카드와 일별내역의 날짜별 상태). 사용량·청구서·모델은 건드리지 않음. 08:00 확인은 아래 전체 수집이 같이 함 |
 | 03:30 | `water-backup.timer` → `water-backup.sh` | DB 사본 + 데이터 폴더(이력 자료 `history/` 포함) + 지금 화면용 스냅샷을 묶어 Object Storage `hanwool-water-backup/daily/<날짜>/`에 올림. 서버에 7일, 스토리지에 180일 보관 |
 | 08:00 | 웹 서버(`water-monitor.service`) 안의 수집기 | 아리수 일일 사용량·청구서 수집. 일시 오류는 30분 간격 최대 2번 재시도, 남은 실패는 총괄 관리자에게 메일. 다 끝나면 `settings.collection_auto_settled`에 날짜를 남김 |
-| 08:05~ | `water-refresh.timer` → `water-refresh.sh` | 위 표시가 생길 때까지 1분마다 확인 → 승하차 수집(전날 자료가 없으면 10분마다 다시, 최대 1시간) → 모델 갱신 → 성공하면 아래 14:00 보관을 바로 한 번 더 실행(`OnSuccess`. 채팅이 버킷 사본을 읽어서, 이게 없으면 14:00까지 채팅이 화면보다 하루 늦음) |
-| 14:00 | `water-storage.timer` → `water-storage.sh` | 팀원 Object Storage 보관(`back/storage`): 바뀐 수집·모델 파일을 `hanwool-data/prod/`에 올림. 화면용 스냅샷은 지금 버전만 남김. 운영 DB는 올리지 않음(채팅 읽기 키가 `prod/`를 읽으므로. DB는 03:30 백업 버킷에만). 웹 안의 자동 훅은 켜지 않음(아래 '함께 알아 둘 것') |
+| 08:05~ | `water-refresh.timer` → `water-refresh.sh` | 위 표시가 생길 때까지 1분마다 확인 → 승하차 수집(전날 자료가 없으면 10분마다 다시, 최대 1시간) → 모델 갱신 → 성공하면 아래 보관을 바로 한 번 더 실행(`OnSuccess`. 채팅이 버킷 사본을 읽어서, 이게 없으면 12:15 보관까지 채팅이 화면보다 하루 늦음) |
+| 00:15, 12:15, 14:00, 18:15 | `water-storage.timer` → `water-storage.sh` | 팀원 Object Storage 보관(`back/storage`): 바뀐 수집·모델 파일을 `hanwool-data/prod/`에 올림. 00:15·12:15·18:15는 아리수 상태 확인 15분 뒤라 채팅이 그 확인값을 바로 봄(08시 확인분은 위 `OnSuccess`가 올림). 화면용 스냅샷은 지금 버전만 남김. 운영 DB는 올리지 않음(채팅 읽기 키가 `prod/`를 읽으므로. DB는 03:30 백업 버킷에만). 웹 안의 자동 훅은 켜지 않음(아래 '함께 알아 둘 것') |
 
 ## 자동 배포 (GitHub → 서버)
 
@@ -24,7 +24,7 @@ NCP 운영 서버(`water-prod`, Ubuntu 24.04)에 실제로 깔려 있는 설정 
 | `*.md`, `docs/`, `tests/`, `.github/` | 받기만 함 |
 | `deploy/` | 받기만 함. root 설정이라 아래 '깔거나 고칠 때'대로 직접 설치(로그에 알림) |
 
-- 재시작이 필요한 커밋은 웹이 꺼져 있을 때, 수집 작업 중, 03:30 백업·08:05 갱신·14:00 보관이 도는 동안, 07:50~08:05에는 미뤘다가 다음 실행에 반영합니다(재시작하면 수집이 끊김).
+- 재시작이 필요한 커밋은 웹이 꺼져 있을 때, 수집 작업 중, 03:30 백업·08:05 갱신·보관(00:15·12:15·14:00·18:15)이 도는 동안, 07:50~08:05에는 미뤘다가 다음 실행에 반영합니다(재시작하면 수집이 끊김).
 - 재시작 뒤 1분 안에 `/api/health`가 응답하지 않으면 이전 커밋과 이전 화면 빌드로 되돌리고 다시 재시작합니다. 그 커밋은 새 커밋이 올라올 때까지 다시 시도하지 않습니다. 패키지 설치는 되돌리지 않습니다.
 - CI가 실패했거나 실행 기록이 없는 커밋(`[skip ci]`)은 배포하지 않습니다. 고친 커밋을 올리면 그 커밋이 통과한 뒤 함께 반영됩니다.
 - 확인: `journalctl -t water-deploy.sh`(반영·미룸·실패 기록만. `-u water-deploy`는 2분마다 남는 실행 기록까지 나옴), `water-deploy.sh check`(지금 할 일만 보여 주고 아무것도 바꾸지 않음). 잠시 멈추기는 `systemctl stop water-deploy.timer`, 다시 켜기는 `systemctl start water-deploy.timer`.
@@ -64,7 +64,7 @@ install -m 700 deploy/water-cli /usr/local/sbin/
 install -m 644 deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now water-monitor water-refresh.timer water-backup.timer water-storage.timer water-deploy.timer
-systemctl list-timers 'water-*'          # 03:30 백업, 08:05 갱신, 14:00 보관, 2분마다 배포가 보이면 된다
+systemctl list-timers 'water-*'          # 03:30 백업, 08:05 갱신, 보관(00:15·12:15·14:00·18:15 중 다음 시각), 2분마다 배포가 보이면 된다
 ```
 
 Nginx(인증서를 받은 뒤):
@@ -91,22 +91,22 @@ systemctl stop water-monitor water-refresh.timer water-backup.timer water-storag
 mv /var/lib/water-monitor /var/lib/water-monitor.broken-$(date +%F)   # 지우지 않고 옆으로 옮긴다
 mkdir -p /var/lib/water-monitor
 tar -xzf data.tar.gz -C /var/lib/water-monitor
-rm -f /var/lib/water-monitor/.object-storage-index.json   # 다음 14:00 보관이 버킷과 처음부터 다시 대조해 맞춘다
+rm -f /var/lib/water-monitor/.object-storage-index.json   # 다음 보관이 버킷과 처음부터 다시 대조해 맞춘다
 [ -f snapshot.tar.gz ] && tar -xzf snapshot.tar.gz -C /var/lib/water-monitor
 gunzip -c app.sqlite3.gz > /var/lib/water-monitor/app.sqlite3
 chown -R water:water /var/lib/water-monitor
 chmod 700 /var/lib/water-monitor
 chmod 600 /var/lib/water-monitor/app.sqlite3
 systemctl start water-monitor water-refresh.timer water-backup.timer water-deploy.timer
-# 되돌린 자료를 확인한 뒤에 켠다(멈춘 사이 14:00가 지났으면 켜자마자 버킷을 되돌린 상태로 맞춘다)
+# 되돌린 자료를 확인한 뒤에 켠다(멈춘 사이 보관 시각이 지났으면 켜자마자 버킷을 되돌린 상태로 맞춘다)
 systemctl start water-storage.timer
 ```
 백업한 날 이후에 수집된 자료는 다음 자동 수집이 빠진 날짜를 찾아 다시 채웁니다.
 
 ## 함께 알아 둘 것
 
-- 모델 학습 이력·계량기 매핑·역 위치 초기 자료(고객번호·역명·사용량이 든 CSV·JSON)는 저장소가 아니라 `/var/lib/water-monitor/history/`에 있습니다(`APP_HISTORY_DIR`로 바꿀 수 있음). 폴더 구조는 옛 `data/`와 같고(`history/processed`, `history/billing`, `history/app_seed`, `history/ml_dataset`, `history/daily`), 14:00 보관이 버킷 `history/`로 올리고 `restore`가 되살립니다. 2026-10-22에 저장소에서 자료를 빼면서 서버 체크아웃의 `data/{processed,billing,app_seed,ml_dataset,daily}`를 여기로 옮겼습니다.
-- 03:30 백업은 날짜별로 되돌리는 용도입니다. 앱 안의 Object Storage 보관 기능(`back/storage`)은 수집 자료 보관과 새 서버 복원용이고, 08:05 갱신이 끝날 때와 14:00에 `water-storage.sh`가 돌립니다. 백업 사본은 데이터 폴더 밖에 만들어서 두 기능이 겹치지 않습니다.
+- 모델 학습 이력·계량기 매핑·역 위치 초기 자료(고객번호·역명·사용량이 든 CSV·JSON)는 저장소가 아니라 `/var/lib/water-monitor/history/`에 있습니다(`APP_HISTORY_DIR`로 바꿀 수 있음). 폴더 구조는 옛 `data/`와 같고(`history/processed`, `history/billing`, `history/app_seed`, `history/ml_dataset`, `history/daily`), 보관이 버킷 `history/`로 올리고 `restore`가 되살립니다. 2026-10-22에 저장소에서 자료를 빼면서 서버 체크아웃의 `data/{processed,billing,app_seed,ml_dataset,daily}`를 여기로 옮겼습니다.
+- 03:30 백업은 날짜별로 되돌리는 용도입니다. 앱 안의 Object Storage 보관 기능(`back/storage`)은 수집 자료 보관과 새 서버 복원용이고, 08:05 갱신이 끝날 때와 00:15·12:15·14:00·18:15에 `water-storage.sh`가 돌립니다. 백업 사본은 데이터 폴더 밖에 만들어서 두 기능이 겹치지 않습니다.
 - 웹 설정(`/etc/water-monitor.env`)에는 `OBJECT_STORAGE_` 줄을 넣지 않습니다. 이 파일은 08:05 `water-refresh`도 읽어서, 넣으면 웹과 갱신 안의 자동 훅이 켜집니다. 훅은 수집 워커 안에서 시간 제한 없이 돌아서 스토리지가 막히는 날 08:00 수집 마무리(재시도·실패 메일·완료 표시)와 모델 갱신이 몇 시간 밀립니다. 보관은 버킷 `hanwool-data`의 `prod/`를 쓰고(코드 기본값 `mulsaemi`는 팀원 PC 시험용), 키는 03:30 백업용 서브 계정 키를 이 작업에만 넘깁니다.
 - 팀원 인수인계 문서(`docs/ncp-object-storage-handoff.md`)의 웹 설정에 넣고 켜기(5-1 3번, 5-4 1번), 기본 접두어 `mulsaemi`, root 셸에서 `python -m back.storage` 실행은 이 서버에서 하지 않습니다. 이 방식에서는 `audit_log`의 `storage_db_backup`이 생기지 않으니, 확인은 `journalctl -u water-storage`로 합니다.
 - 운영 DB 백업은 `hanwool-data`에 올리지 않습니다(2026-10-22부터). 채팅의 읽기 키가 `prod/` 전체를 읽을 수 있어서, 거기 둔 DB 사본(비밀번호 해시·세션·전 사업소 고객번호·청구서)이 그 키로 내려받힙니다. DB 사본은 03:30 백업이 `hanwool-water-backup`에만 둡니다. 예전에 올라간 사본은 root에서 한 번 비웁니다: `set -a; . /etc/water-backup.env; set +a; aws --endpoint-url "$S3_ENDPOINT" s3 rm s3://hanwool-data/prod/backups/sqlite/ --recursive`.

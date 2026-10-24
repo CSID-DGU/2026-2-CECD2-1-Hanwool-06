@@ -130,7 +130,7 @@ def save_scatter_plot(anomalies: pd.DataFrame, warn_q: float, alert_q: float, pa
     """예측(x) vs 실측(y) 산점도를 저장한다.
 
     - y=x 완벽예측선: 검은 실선
-    - 잔차 |actual-pred| 의 q95/q99 밴드: 빨간 점선 (y=x ± 해당 잔차)
+    - 잔차 |actual-pred| 의 주의/경고 분위수 밴드: 빨간 점선 (y=x ± 해당 잔차)
     - 점 색: 심각도(정상/주의/경고). 음수·비유한 관측은 제외.
     (한글 폰트 깨짐 방지로 라벨은 영문)
     """
@@ -144,8 +144,8 @@ def save_scatter_plot(anomalies: pd.DataFrame, warn_q: float, alert_q: float, pa
     actual = df["일사용량_톤"].to_numpy(dtype=float)
     pred = df["predicted_ton"].to_numpy(dtype=float)
     abs_resid = np.abs(actual - pred)
-    d_warn = float(np.quantile(abs_resid, warn_q))    # 잔차 q95
-    d_alert = float(np.quantile(abs_resid, alert_q))  # 잔차 q99
+    d_warn = float(np.quantile(abs_resid, warn_q))    # 잔차 주의 분위수
+    d_alert = float(np.quantile(abs_resid, alert_q))  # 잔차 경고 분위수
     hi = float(max(actual.max(), pred.max())) * 1.02
     lim = (0.0, hi)
 
