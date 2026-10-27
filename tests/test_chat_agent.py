@@ -427,12 +427,23 @@ class ChatAgentTest(unittest.TestCase):
         self.kit.execute.return_value = {'error': '연결 실패', 'code': 'storage_unavailable'}
         self.responses = [response(route()), response(output=[tool()]), response(answer(source_ids=[]))]
         result = self.run_agent()
-        self.assertIn('NCP 원격 자료에 연결하지 못해', result['answer'])
+        self.assertIn('자료를 불러오지 못해', result['answer'])
+        self.assertIn('서비스 운영 담당자에게 문의', result['answer'])
+        self.assertNotIn('NCP', result['answer'])
+        self.kit.execute.return_value = {'error': '자료 없음', 'code': 'arisu_unavailable'}
+        self.responses = [response(route()), response(output=[tool('get_arisu_status',
+                          {'meter_ref': None, 'station': '동부역', 'line': None, 'start_date': '2026-08-31', 'end_date': '2026-08-31'})]),
+                          response(answer(source_ids=[]))]
+        result = self.run_agent('동부역 아리수 원격검침 상태는?')
+        self.assertIn('아리수 원격검침 자료가 아직 준비되지 않아', result['answer'])
+        self.assertIn('서비스 운영 담당자에게 문의', result['answer'])
+        self.assertNotIn('NCP', result['answer'])
         self.kit.execute.return_value = {'registered': False, 'matches': []}
         self.responses = [response(route(intent='MAINTENANCE_GUIDE', station=None)),
                           response(output=[tool('search_manuals', {'query': '밸브 점검'})]), response(answer(source_ids=[]))]
         result = self.run_agent('밸브 점검 방법')
-        self.assertIn('등록된 점검 문서 또는 유사 사례 자료가 없어', result['answer'])
+        self.assertIn('점검 안내문이나 참고할 사례가 아직 준비되지 않아', result['answer'])
+        self.assertIn('서비스 운영 담당자에게 자료 준비를 요청', result['answer'])
         self.assertEqual(result['sources'], [])
 
     def test_cause_is_hypothesis_and_definitive_cause_is_rejected(self):

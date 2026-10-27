@@ -16,6 +16,16 @@ function refuse(message, status) {
   error.status = status;
   throw error;
 }
+
+// Validation details contain server field names and English messages. Keep those out of staff-facing notices.
+function inputErrorMessage(issue) {
+  const field = issue?.loc?.at(-1);
+  if (["password", "new_password", "current_password"].includes(field)
+      && ["string_too_short", "string_too_long"].includes(issue?.type)) {
+    return "비밀번호는 12~128자로 입력하세요.";
+  }
+  return "입력한 내용을 확인해 주세요. 필수 항목과 입력 형식을 확인한 뒤 다시 시도하세요.";
+}
 async function staticRequest(path, method) {
   const data = await staticReady;
   if (method !== "GET") refuse("저장된 화면이라 바꿀 수 없습니다.", 405);
@@ -41,7 +51,7 @@ export async function request(path, { method = "GET", body, responseType = "json
   });
   const data = response.status === 204 ? null : response.ok && responseType === "blob"
     ? await response.blob() : await response.json().catch(() => {
-      if (response.ok) throw new Error("서버 응답 형식이 올바르지 않습니다. API 경로를 확인하세요.");
+      if (response.ok) throw new Error("화면 자료를 불러오지 못했습니다. 잠시 후 다시 시도하고 계속되면 서비스 운영 담당자에게 문의하세요.");
       return null;
     });
   if (!response.ok) throw failure(response.status, path, data);
@@ -54,7 +64,7 @@ function failure(status, path, data) {
   }
   const detail = data?.detail;
   const message = typeof detail === "string" ? detail : Array.isArray(detail)
-    ? detail.map((x) => `${x.loc?.slice(1).join(".") || "입력"}: ${x.msg}`).join(" · ")
+    ? [...new Set(detail.map(inputErrorMessage))].join(" ")
     : `요청을 완료하지 못했습니다 (${status}).`;
   const error = new Error(message);
   error.status = status;

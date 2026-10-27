@@ -26,7 +26,7 @@ def analyze_cause(meter_id, date=None, office_ids=None):
     cal = data_access.calendar_info(date)
     result = {'meter_id': meter_id, '역명': item['역명'], '날짜': date, 'anomaly': item, 'calendar': cal}
     if not config.openai_ready():
-        return {**result, 'analysis': {'error': '원인 분석을 쓰려면 서버에 OPENAI_API_KEY를 설정해야 합니다.'}, 'generated_by': 'none'}
+        return {**result, 'analysis': {'error': '원인 분석 서비스가 아직 준비되지 않았습니다. 서비스 운영 담당자에게 문의하세요.'}, 'generated_by': 'none'}
     # Customer identifiers, addresses, names and emails do not leave the application.
     facts = {k: item[k] for k in ('역명', '날짜', '심각도', '방향', 'predicted_ton', 'actual_ton', 'error_ton', 'pct')}
     context = data_access.analysis_context(meter_id, date, office_ids) or {}
@@ -84,4 +84,4 @@ def analyze_cause(meter_id, date=None, office_ids=None):
         return {**result, 'analysis': parsed, 'generated_by': config.OPENAI_MODEL}
     except Exception as exc:
         logger.warning('External analysis failed (%s)', type(exc).__name__)
-        return {**result, 'analysis': {'error': '분석 서비스에서 답을 받지 못했습니다. 잠시 후 다시 시도하세요.'}, 'generated_by': 'none'}
+        return {**result, 'analysis': {'error': '원인 분석 서비스에서 답변을 받지 못했습니다. 잠시 후 다시 시도하고 계속되면 서비스 운영 담당자에게 문의하세요.'}, 'generated_by': 'none'}

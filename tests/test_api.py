@@ -975,6 +975,15 @@ class ApplicationTest(unittest.TestCase):
         text = ''.join(PdfReader(io.BytesIO(pdf.content)).pages[0].extract_text().split())
         self.assertIn('상·하수도사용량(톤)-', text)
 
+    def test_unconfigured_analysis_gives_staff_a_contact_instead_of_setup_instructions(self):
+        self.login()
+        response = self.client.post('/api/analyze', json={'meter_id': '000000001'})
+        self.assertEqual(response.status_code, 200)
+        message = response.json()['analysis']['error']
+        self.assertIn('원인 분석 서비스가 아직 준비되지 않았습니다', message)
+        self.assertIn('서비스 운영 담당자에게 문의하세요', message)
+        self.assertNotIn('OPENAI_API_KEY', message)
+
     def test_invalid_model_response_uses_safe_failure_instead_of_react_objects(self):
         self.login()
         valid = {'primary_cause': '원자료와 운영 현황 확인이 필요합니다.', 'confidence': '낮음',
@@ -989,6 +998,7 @@ class ApplicationTest(unittest.TestCase):
                 response = self.client.post('/api/analyze', json={'meter_id': '000000001'}).json()
                 self.assertEqual(response['generated_by'], 'none')
                 self.assertIn('error', response['analysis'])
+                self.assertIn('서비스 운영 담당자에게 문의하세요', response['analysis']['error'])
             service.responses.create.return_value.output_text = json.dumps(valid, ensure_ascii=False)
             response = self.client.post('/api/analyze', json={'meter_id': '000000001'}).json()
             self.assertEqual(response['analysis'], valid)
