@@ -10,6 +10,8 @@
 .ag-item-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .ag-item-btns .secondary-button { min-height: 30px; padding: 4px 10px; font-size: 12px; }
 .ag-item > p { margin-top: 8px; }
+.ag-loading { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--sub); font-size: 13px; }
+.ag-loading .spinner { width: 14px; height: 14px; margin-top: 3px; border-width: 2px; flex: none; }
 .ag-cause { margin-top: 10px; padding: 12px; background: var(--ground); font-size: 13px; }
 .ag-cause p { margin: 0 0 6px; }
 .ag-cause p:last-child { margin-bottom: 0; }

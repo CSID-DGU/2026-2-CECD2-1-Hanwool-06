@@ -984,6 +984,15 @@ class ApplicationTest(unittest.TestCase):
         self.assertIn('서비스 운영 담당자에게 문의하세요', message)
         self.assertNotIn('OPENAI_API_KEY', message)
 
+    def test_slow_analysis_ends_with_a_message_inside_the_proxy_time_limit(self):
+        self.login()
+        service = Mock()
+        service.responses.create.side_effect = TimeoutError
+        with patch.object(config, 'OPENAI_API_KEY', 'mock'), patch.object(main.agent, 'OpenAI', return_value=service) as client:
+            response = self.client.post('/api/analyze', json={'meter_id': '000000001'}).json()
+        client.assert_called_once_with(api_key='mock', timeout=50, max_retries=0)
+        self.assertIn('잠시 후 다시 시도', response['analysis']['error'])
+
     def test_invalid_model_response_uses_safe_failure_instead_of_react_objects(self):
         self.login()
         valid = {'primary_cause': '원자료와 운영 현황 확인이 필요합니다.', 'confidence': '낮음',

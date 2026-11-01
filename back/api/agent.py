@@ -59,7 +59,8 @@ def analyze_cause(meter_id, date=None, office_ids=None):
                     '"is_calendar_effect":false,"confidence":"낮음|보통|높음",'
                     '"recommendation":["현장에서 가장 먼저 확인할 것", "그다음", "그다음"]} (recommendation은 2~3개, 각 한 줄, 중요한 순서, 번호 없이)')
     try:
-        response = OpenAI(api_key=config.OPENAI_API_KEY, timeout=45, max_retries=1).responses.create(
+        # Finish inside nginx's default 60-second limit so staff see the message below instead of a 504.
+        response = OpenAI(api_key=config.OPENAI_API_KEY, timeout=50, max_retries=0).responses.create(
             model=config.OPENAI_MODEL, instructions=instructions, input=prompt, tools=[{'type': 'web_search'}])
         text = response.output_text.strip()
         parsed = json.loads(text[text.find('{'):text.rfind('}')+1])
