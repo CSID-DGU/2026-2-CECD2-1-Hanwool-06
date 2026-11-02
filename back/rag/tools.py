@@ -209,7 +209,7 @@ class ChatTools:
         except ChatDeadlineError:
             return {'error': '조회 시간이 초과되었습니다. 범위를 줄여 다시 요청해 주세요.', 'code': 'deadline_exceeded'}
         except (ChatStorageError, ValueError, TypeError, KeyError):
-            return {'error': 'NCP 운영 자료를 확인할 수 없습니다. 저장소 연결과 게시 상태를 확인해 주세요.', 'code': 'storage_unavailable'}
+            return {'error': '운영 자료를 불러오지 못했습니다. 잠시 후 다시 시도하고 계속되면 서비스 운영 담당자에게 문의하세요.', 'code': 'storage_unavailable'}
 
     def _meters(self):
         if self._catalog is None:
@@ -654,7 +654,7 @@ class ChatTools:
         if self._arisu_data is None:
             raw = self.store.read('arisu/index.json', 4 * 1024 * 1024, optional=True)
             if raw is None:
-                raise ToolInputError('NCP에 아리수 원격검침 자료가 아직 없습니다. 다음 보관 뒤에 다시 확인해 주세요.', 'arisu_unavailable')
+                raise ToolInputError('아리수 원격검침 자료가 아직 준비되지 않았습니다. 잠시 후 다시 시도하고 계속되면 서비스 운영 담당자에게 문의하세요.', 'arisu_unavailable')
             data = decode_json(raw)
             if not isinstance(data, dict) or not isinstance(data.get('meters'), dict):
                 raise ChatStorageError('invalid_arisu_index')
@@ -690,7 +690,7 @@ class ChatTools:
             or max((s[:10] for s in stamps if s), default=None)
         end = end_date or last
         if end is None:
-            raise ToolInputError('NCP에 이 계량기의 아리수 원격검침 자료가 아직 없습니다.', 'arisu_unavailable')
+            raise ToolInputError('이 계량기의 아리수 원격검침 자료가 아직 준비되지 않았습니다. 서비스 운영 담당자에게 문의하세요.', 'arisu_unavailable')
         start = start_date or Date.fromordinal(max(1, _day(end).toordinal() - 6)).isoformat()
         days = _range(start, end)
         # 0곳인 판정도 집계에 남겨 "아리수 누수위험 경고 0곳"을 확인할 수 있게 한다.

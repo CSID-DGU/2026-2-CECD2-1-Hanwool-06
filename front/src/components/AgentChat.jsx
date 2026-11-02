@@ -118,8 +118,8 @@ export default function AgentChat() {
       onKeyDown={(event) => { if (event.key === "Escape" && !event.nativeEvent.isComposing && !composing.current) { event.preventDefault(); event.stopPropagation(); close(); } }}>
       <header className="chat-header">
         <div className="chat-heading"><img className="chat-mark" src={mulsaemiProfile} alt="" /><div><h2 id="agent-chat-title">물샘이</h2>
-          <p className={`chat-connection is-${apiActive == null ? "checking" : apiActive ? "active" : "inactive"}`} role="status" title="OpenAI API 연결 상태">
-            <span className="chat-connection-dot" aria-hidden="true" /><span className="sr-only">OpenAI API 연결 상태: </span>{apiActive == null ? "확인 중" : apiActive ? "활성화" : "비활성화"}
+          <p className={`chat-connection is-${apiActive == null ? "checking" : apiActive ? "active" : "inactive"}`} role="status" title="답변 서비스 연결 상태">
+            <span className="chat-connection-dot" aria-hidden="true" /><span className="sr-only">답변 서비스 연결 상태: </span>{apiActive == null ? "확인 중" : apiActive ? "활성화" : "비활성화"}
           </p></div></div>
         <div className="chat-actions"><button type="button" onClick={startNew} disabled={sending || (!messages.length && !pendingQuestion)} aria-label="새 대화 시작">새 대화</button>
           <button type="button" className="chat-close" onClick={close} aria-label="채팅 닫기">×</button></div>

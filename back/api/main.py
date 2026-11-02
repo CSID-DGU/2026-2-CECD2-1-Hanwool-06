@@ -706,7 +706,8 @@ def alert(body: Analyze, user=Depends(auth.current_user)):
         if attempts_last_hour(c, user['id'], 'alert_attempt') >= 30:
             raise HTTPException(429, '이상 알림은 계정당 한 시간에 30회까지 발송할 수 있습니다.')
         db.audit(c, user['id'], 'alert_attempt', body.meter_id + ':' + item['날짜'])
-    result = mailer.send_mail(f"[{item['심각도']}] {item['역명']} 수도 사용량 확인 ({item['날짜']})", mailer.build_alert_html(item), ','.join(recipients))
+    name = catalog.with_line(item['역명'])
+    result = mailer.send_mail(f"[{item['심각도']}] {name} 수도 사용량 확인 ({item['날짜']})", mailer.build_alert_html(item | {'역명': name}), ','.join(recipients))
     with db.connect() as c:
         db.audit(c, user['id'], 'alert_sent' if result['sent'] else 'alert_failed', body.meter_id + ':' + item['날짜'])
     return {**result, 'item': item}

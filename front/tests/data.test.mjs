@@ -486,11 +486,27 @@ test("data polling sends the held version and an unchanged 204 leaves current da
   assert.deepEqual([12, -3, 0, null].map((pct) => signedPct(pct, "–")), ["+12%", "-3%", "0%", "–"]);
 });
 
-test("successful API responses with invalid JSON report a routing error", async () => {
+test("invalid server responses give staff a recovery action instead of API instructions", async () => {
   const originalFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected token '<'"); } });
-    await assert.rejects(request("/health"), /서버 응답 형식이 올바르지 않습니다\. API 경로를 확인하세요/);
+    await assert.rejects(request("/health"), /화면 자료를 불러오지 못했습니다.*서비스 운영 담당자에게 문의하세요/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("validation failures explain password limits in Korean without internal field names", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [field, type] of [["new_password", "string_too_long"], ["new_password", "string_too_short"], ["password", "string_too_long"]]) {
+      globalThis.fetch = async () => ({ ok: false, status: 422, json: async () => ({ detail: [
+        { loc: ["body", field], type, msg: "String should have at most 128 characters", input: "private-password" },
+      ] }) });
+      await assert.rejects(request("/auth/password"), (e) => e.status === 422 && e.message === "비밀번호는 12~128자로 입력하세요.");
+    }
+    globalThis.fetch = async () => ({ ok: false, status: 422, json: async () => ({ detail: [
+      { loc: ["body", "internal_field"], type: "missing", msg: "Field required" }, null,
+    ] }) });
+    await assert.rejects(request("/meters"), (e) => e.status === 422 && e.message.includes("필수 항목") && !/internal_field|Field required/.test(e.message));
   } finally { globalThis.fetch = originalFetch; }
 });
 

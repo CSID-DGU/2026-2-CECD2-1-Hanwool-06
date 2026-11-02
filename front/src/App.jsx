@@ -117,7 +117,8 @@ export default function App() {
     </div>
     <SiteFooter />
     {!isStatic && !session.must_change_password && <AgentChat key={session.id} />}
-    {summaryOpen && !session.must_change_password && <SummaryPopup date={data?.status?.reference_date} onClose={() => setSummaryOpen(false)} />}
+    {/* key가 AgentChat과 겹치면 React가 둘을 섞어 대화창이 깨진다. */}
+    {!session.must_change_password && <SummaryPopup key={`summary-${session.id}`} open={summaryOpen} date={data?.status?.reference_date} onClose={() => setSummaryOpen(false)} />}
     {reportOpen && !session.must_change_password && <ReportPanel user={session} reports={reports} onClose={() => setReportOpen(false)} />}
   </>;
 }

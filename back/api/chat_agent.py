@@ -1157,11 +1157,11 @@ def _run(client, message, conversation, deadline, progress=_no_progress):
                         primary_groups[group].update(primary)
             inputs.append({'type': 'function_call_output', 'call_id': item['call_id'], 'output': encoded})
     if 'storage_unavailable' in missing_codes:
-        answer = 'NCP 원격 자료에 연결하지 못해 사용량과 심각도를 확인할 수 없습니다. 연결 상태를 확인한 뒤 다시 질문해 주세요.'
+        answer = '자료를 불러오지 못해 사용량과 위험도를 확인할 수 없습니다. 잠시 후 다시 시도하고 계속되면 서비스 운영 담당자에게 문의하세요.'
     elif 'arisu_unavailable' in missing_codes:
-        answer = 'NCP에 아리수 원격검침 자료가 아직 없어 아리수 누수위험과 계량기 상태를 확인할 수 없습니다. 수집·보관이 끝난 뒤 다시 질문해 주세요.'
+        answer = '아리수 원격검침 자료가 아직 준비되지 않아 누수위험과 계량기 상태를 확인할 수 없습니다. 잠시 후 다시 시도하고 계속되면 서비스 운영 담당자에게 문의하세요.'
     elif 'corpus_not_registered' in missing_codes:
-        answer = 'NCP에 등록된 점검 문서 또는 유사 사례 자료가 없어 근거 있는 안내를 만들 수 없습니다. 해당 자료를 등록한 뒤 다시 질문해 주세요.'
+        answer = '점검 안내문이나 참고할 사례가 아직 준비되지 않아 안내해 드리기 어렵습니다. 서비스 운영 담당자에게 자료 준비를 요청하세요.'
     elif 'ambiguous_station' in missing_codes:
         answer = '같은 이름의 역이나 계량기가 여러 개입니다. 호선과 역 이름을 함께 알려 주세요.'
     elif missing_codes & {'result_too_large', 'too_many_meters'}:
@@ -1187,7 +1187,7 @@ def chat(message, conversation_id, user_id, progress=_no_progress):
     conversation = _acquire(user_id, conversation_id)
     try:
         if not config.openai_ready():
-            raise HTTPException(503, '대화 서비스가 아직 설정되지 않았습니다.')
+            raise HTTPException(503, '대화 서비스가 아직 준비되지 않았습니다. 서비스 운영 담당자에게 문의하세요.')
         client = OpenAI(api_key=config.OPENAI_API_KEY, timeout=MAX_SECONDS, max_retries=0)
         try:
             result, context = _run(client, message, conversation, deadline, progress)
@@ -1200,6 +1200,6 @@ def chat(message, conversation_id, user_id, progress=_no_progress):
         raise
     except Exception as exc:
         logger.warning('Chat failed (%s)', type(exc).__name__)
-        raise HTTPException(502, '대화 서비스에서 확인된 답을 받지 못했습니다. 잠시 후 다시 시도하세요.') from None
+        raise HTTPException(502, '대화 서비스에서 답변을 받지 못했습니다. 잠시 후 다시 시도하고 계속되면 서비스 운영 담당자에게 문의하세요.') from None
     finally:
         _release(conversation)
