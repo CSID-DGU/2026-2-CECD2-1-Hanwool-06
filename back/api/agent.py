@@ -2,7 +2,7 @@
 import json
 import logging
 from openai import OpenAI
-from . import config, data_access
+from . import catalog, config, data_access
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ def analyze_cause(meter_id, date=None, office_ids=None):
         return {**result, 'analysis': {'error': '원인 분석 서비스가 아직 준비되지 않았습니다. 서비스 운영 담당자에게 문의하세요.'}, 'generated_by': 'none'}
     # Customer identifiers, addresses, names and emails do not leave the application.
     facts = {k: item[k] for k in ('역명', '날짜', '심각도', '방향', 'predicted_ton', 'actual_ton', 'error_ton', 'pct')}
+    facts['역명'] = catalog.with_line(facts['역명'])
     context = data_access.analysis_context(meter_id, date, office_ids) or {}
     prompt = json.dumps({'facts': facts, 'calendar': cal, **context}, ensure_ascii=False)
     # Patterns first, then concrete candidates: a list of disclaimers does not tell staff what to check.
@@ -51,7 +52,7 @@ def analyze_cause(meter_id, date=None, office_ids=None):
                     '이런 일은 출처에서 날짜와 장소가 확인될 때만 primary_cause·reasons·events 어디에서든 말하고, 확인되지 않으면 일어났다고 쓰지 않는다.\n'
                     '원격 계량기나 현장 상태를 확인했다고 말하지 않는다. 원인과 누수 여부는 추정이며 확신 정도는 confidence로 나타낸다. '
                     '"자료만으로 알 수 없다"로 끝내지 말고, 자료가 가장 강하게 가리키는 원인을 고른다.\n'
-                    '짧게 쓴다(화면의 작은 창에 나온다): primary_cause는 한 문장, reasons와 recommendation은 각각 2~3개를 한 줄씩. '
+                    '답에 역을 적을 때는 facts.역명 그대로 쓴다. 짧게 쓴다(화면의 작은 창에 나온다): primary_cause는 한 문장, reasons와 recommendation은 각각 2~3개를 한 줄씩. '
                     '화면에 이미 나오는 실제·예측 사용량과 변동률은 되풀이하지 않고 판단에 쓴 핵심 수치만 쓴다. 찾은 행사가 없으면 검색 이야기는 쓰지 않는다. '
                     'JSON만 반환한다: {"primary_cause":"변동 모양과 가장 가능성 높은 원인 한 문장", '
                     '"reasons":["핵심 근거 한 줄", "다른 후보 한 줄"], '

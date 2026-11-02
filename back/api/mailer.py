@@ -4,7 +4,7 @@ import ssl
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from html import escape
-from . import config
+from . import catalog, config
 
 
 def send_mail(subject, body_html, to=None):
@@ -43,7 +43,7 @@ def build_collection_alert_html(alert):
     causes = {}
     for item in alert['items']:
         causes.setdefault((labels.get(item['status'], item['status']), item['message']), []).append(
-            f"{item['display_name']}({item['customer_number']})")
+            f"{catalog.with_line(item['display_name'])}({item['customer_number']})")
     rows = ''.join(f'<tr><th>{escape(label)} {len(names)}곳</th><td>{escape(message)}<br>{escape(", ".join(names))}</td></tr>'
                    for (label, message), names in causes.items())
     retried = f'과 30분 간격 재시도 {alert["retries"]}번' if alert['retries'] else ''

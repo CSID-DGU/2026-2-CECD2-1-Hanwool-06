@@ -19,6 +19,11 @@ def customer_id(value) -> str:
     return value.zfill(9) if value.isdigit() else value
 
 
+def with_line(name: str) -> str:
+    """양평역5 → 양평역 5호선, the way the screen writes a station."""
+    return re.sub(r"^(.+역)(\d+)$", r"\1 \2호선", name)
+
+
 def number(value):
     if value in (None, "", "-", "—"):
         return None

@@ -993,6 +993,31 @@ class ApplicationTest(unittest.TestCase):
         client.assert_called_once_with(api_key='mock', timeout=50, max_retries=0)
         self.assertIn('잠시 후 다시 시도', response['analysis']['error'])
 
+    def test_analysis_names_the_station_the_way_the_screen_does(self):
+        self.login()
+        service = Mock()
+        service.responses.create.return_value.output_text = json.dumps({'primary_cause': '확인이 필요합니다.'}, ensure_ascii=False)
+        with patch.object(config, 'OPENAI_API_KEY', 'mock'), patch.object(main.agent, 'OpenAI', return_value=service):
+            for stored, shown in (('동부역', '동부역'), ('동부역2', '동부역 2호선')):
+                with db.connect() as c:
+                    c.execute("UPDATE meters SET display_name=? WHERE id='000000001'", (stored,))
+                self.client.post('/api/analyze', json={'meter_id': '000000001'})
+                self.assertEqual(json.loads(service.responses.create.call_args.kwargs['input'])['facts']['역명'], shown)
+        self.assertIn('facts.역명 그대로', service.responses.create.call_args.kwargs['instructions'])
+
+    def test_mail_names_the_station_the_way_the_screen_does(self):
+        self.login()
+        with db.connect() as c:
+            c.execute("UPDATE meters SET display_name='동부역2' WHERE id='000000001'")
+        with patch.object(mailer, 'send_mail', return_value={'sent': True}) as send:
+            self.assertEqual(self.client.post('/api/alert', json={'meter_id': '000000001', 'date': '2026-08-31'}).status_code, 200)
+        subject, body = send.call_args.args[:2]
+        self.assertIn('동부역 2호선', subject)
+        self.assertIn('동부역 2호선', body)
+        self.assertNotIn('동부역2', subject + body)
+        failed = {'status': 'failed', 'message': '확인', 'display_name': '서부역5', 'customer_number': '000000002'}
+        self.assertIn('서부역 5호선(000000002)', mailer.build_collection_alert_html({'day': '2026-09-23', 'retries': 0, 'items': [failed]}))
+
     def test_invalid_model_response_uses_safe_failure_instead_of_react_objects(self):
         self.login()
         valid = {'primary_cause': '원자료와 운영 현황 확인이 필요합니다.', 'confidence': '낮음',
