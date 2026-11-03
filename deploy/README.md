@@ -41,7 +41,8 @@ NCP 운영 서버(`water-prod`, Ubuntu 24.04)에 실제로 깔려 있는 설정 
 | `systemd/water-deploy.service`, `systemd/water-deploy.timer` | `/etc/systemd/system/` | 644 |
 | `water-refresh.sh`, `water-backup.sh`, `water-storage.sh`, `water-deploy.sh` | `/usr/local/sbin/` | 755 |
 | `water-cli` (운영 설정으로 관리 명령을 water 사용자로 실행) | `/usr/local/sbin/` | 700 |
-| `nginx/water-monitor.conf` (HTTPS, 로그인 요청 제한, 8000번으로 전달) | `/etc/nginx/sites-available/water-monitor` | 644 |
+| `nginx/water-monitor.conf` (HTTPS, 허용 IP만 접속, 로그인 요청 제한, 8000번으로 전달) | `/etc/nginx/sites-available/water-monitor` | 644 |
+| `nginx/water-allow.conf.example` | `/etc/nginx/water-allow.conf` (허용 IP를 채워서) | 600, root |
 | `water-monitor.env.example` | `/etc/water-monitor.env` (값을 채워서) | 600, root |
 | `water-backup.env.example` | `/etc/water-backup.env` (값을 채워서) | 600, root |
 | `water-deploy.env.example` | `/etc/water-deploy.env` (값을 채워서) | 600, root |
@@ -67,8 +68,9 @@ systemctl enable --now water-monitor water-refresh.timer water-backup.timer wate
 systemctl list-timers 'water-*'          # 03:30 백업, 08:05 갱신, 보관(00:15·12:15·14:00·18:15 중 다음 시각), 2분마다 배포가 보이면 된다
 ```
 
-Nginx(인증서를 받은 뒤):
+Nginx(인증서를 받은 뒤). 허용 IP 파일이 없으면 `nginx -t`가 실패하고, 비어 있으면 아무도 접속하지 못한다:
 ```sh
+[ -f /etc/nginx/water-allow.conf ] || install -m 600 -o root -g root deploy/nginx/water-allow.conf.example /etc/nginx/water-allow.conf   # 처음 한 번. 열어서 <...>를 실제 IP로 바꾼다
 install -m 644 deploy/nginx/water-monitor.conf /etc/nginx/sites-available/water-monitor
 ln -sf /etc/nginx/sites-available/water-monitor /etc/nginx/sites-enabled/water-monitor
 nginx -t && systemctl reload nginx
@@ -105,6 +107,7 @@ systemctl start water-storage.timer
 
 ## 함께 알아 둘 것
 
+- 웹(443)은 `/etc/nginx/water-allow.conf`에 적힌 IP에서만 열리고 다른 곳에서는 403이 난다. 공사 사내망 공인 IP와 팀원 IP를 `allow <IP>;` 한 줄씩 적고, 바꾼 뒤 `nginx -t && systemctl reload nginx`. 팀원 IP가 바뀌어 403이 나면 같은 방법으로 추가한다. 이 파일은 깃에 올리지 않는다(공개 레포에 공사 망 정보와 팀원 IP가 남는다). 80번 포트는 인증서 갱신 때문에 제한하지 않고 https로 넘기기만 하며, 배포 확인(`/api/health`)은 127.0.0.1을 직접 불러서 영향이 없다.
 - 모델 학습 이력·계량기 매핑·역 위치 초기 자료(고객번호·역명·사용량이 든 CSV·JSON)는 저장소가 아니라 `/var/lib/water-monitor/history/`에 있습니다(`APP_HISTORY_DIR`로 바꿀 수 있음). 폴더 구조는 옛 `data/`와 같고(`history/processed`, `history/billing`, `history/app_seed`, `history/ml_dataset`, `history/daily`), 보관이 버킷 `history/`로 올리고 `restore`가 되살립니다. 2026-10-22에 저장소에서 자료를 빼면서 서버 체크아웃의 `data/{processed,billing,app_seed,ml_dataset,daily}`를 여기로 옮겼습니다.
 - 03:30 백업은 날짜별로 되돌리는 용도입니다. 앱 안의 Object Storage 보관 기능(`back/storage`)은 수집 자료 보관과 새 서버 복원용이고, 08:05 갱신이 끝날 때와 00:15·12:15·14:00·18:15에 `water-storage.sh`가 돌립니다. 백업 사본은 데이터 폴더 밖에 만들어서 두 기능이 겹치지 않습니다.
 - 웹 설정(`/etc/water-monitor.env`)에는 `OBJECT_STORAGE_` 줄을 넣지 않습니다. 이 파일은 08:05 `water-refresh`도 읽어서, 넣으면 웹과 갱신 안의 자동 훅이 켜집니다. 훅은 수집 워커 안에서 시간 제한 없이 돌아서 스토리지가 막히는 날 08:00 수집 마무리(재시도·실패 메일·완료 표시)와 모델 갱신이 몇 시간 밀립니다. 보관은 버킷 `hanwool-data`의 `prod/`를 쓰고(코드 기본값 `mulsaemi`는 팀원 PC 시험용), 키는 03:30 백업용 서브 계정 키를 이 작업에만 넘깁니다.

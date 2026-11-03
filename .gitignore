@@ -83,3 +83,6 @@ front/public/daily.json
 /front/dist.next/
 /front/dist.prev/
 /front/dist.failed/
+
+# 허용 IP 목록은 서버(/etc/nginx/water-allow.conf)에만 둔다. 예시 파일만 올린다
+/deploy/nginx/water-allow.conf

@@ -1,0 +1,6 @@
+# /etc/nginx/water-allow.conf (root:root, 600). 실제 IP는 서버에만 두고 깃에 올리지 않는다(공개 레포).
+# 웹(443)에 접속할 수 있는 IP를 한 줄에 하나씩 적는다. 바꾼 뒤 nginx -t && systemctl reload nginx.
+# 비어 있으면 아무도 접속하지 못한다. 80번 포트(인증서 갱신, https로 넘김)에는 적용되지 않는다.
+allow <서울교통공사 사내망 공인 IP>;
+allow <사업소 대역, 예: 203.0.113.0/24>;
+allow <팀원 IP>;
