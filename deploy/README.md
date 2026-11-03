@@ -41,7 +41,7 @@ NCP 운영 서버(`water-prod`, Ubuntu 24.04)에 실제로 깔려 있는 설정 
 | `systemd/water-deploy.service`, `systemd/water-deploy.timer` | `/etc/systemd/system/` | 644 |
 | `water-refresh.sh`, `water-backup.sh`, `water-storage.sh`, `water-deploy.sh` | `/usr/local/sbin/` | 755 |
 | `water-cli` (운영 설정으로 관리 명령을 water 사용자로 실행) | `/usr/local/sbin/` | 700 |
-| `nginx/water-monitor.conf` (HTTPS, 허용 IP만 접속, 로그인 요청 제한, 8000번으로 전달) | `/etc/nginx/sites-available/water-monitor` | 644 |
+| `nginx/water-monitor.conf` (HTTPS: IP 인증서와 seoulmetro-water.co.kr 도메인 인증서, 허용 IP만 접속, 로그인 요청 제한, 8000번으로 전달) | `/etc/nginx/sites-available/water-monitor` | 644 |
 | `nginx/water-allow.conf.example` | `/etc/nginx/water-allow.conf` (허용 IP를 채워서) | 600, root |
 | `water-monitor.env.example` | `/etc/water-monitor.env` (값을 채워서) | 600, root |
 | `water-backup.env.example` | `/etc/water-backup.env` (값을 채워서) | 600, root |
@@ -70,6 +70,7 @@ systemctl list-timers 'water-*'          # 03:30 백업, 08:05 갱신, 보관(00
 
 Nginx(인증서를 받은 뒤). 허용 IP 파일이 없으면 `nginx -t`가 실패하고, 비어 있으면 아무도 접속하지 못한다:
 ```sh
+diff /etc/nginx/sites-available/water-monitor deploy/nginx/water-monitor.conf   # 서버에만 있는 내용(certbot이 더한 블록 등)이 없는지 먼저 본다. 있으면 레포에 먼저 올린다
 [ -f /etc/nginx/water-allow.conf ] || install -m 600 -o root -g root deploy/nginx/water-allow.conf.example /etc/nginx/water-allow.conf   # 처음 한 번. 열어서 <...>를 실제 IP로 바꾼다
 install -m 644 deploy/nginx/water-monitor.conf /etc/nginx/sites-available/water-monitor
 ln -sf /etc/nginx/sites-available/water-monitor /etc/nginx/sites-enabled/water-monitor
@@ -80,7 +81,7 @@ nginx -t && systemctl reload nginx
 0 0,12 * * * root /opt/certbot/bin/python -c 'import random; import time; time.sleep(random.random() * 3600)' && certbot renew -q
 ```
 
-서버에서 이 파일들을 고쳤으면 여기에도 같은 내용으로 올려 둡니다.
+서버에서 이 파일들을 고쳤으면 여기에도 같은 내용으로 올려 둡니다. `certbot --nginx`가 nginx 설정에 블록을 더하거나 고친 경우도 같습니다(도메인 443 블록이 그렇게 생겼습니다). 레포 파일을 그대로 설치하면 서버에만 있던 내용은 사라집니다.
 
 ## 백업에서 되돌리기 (root)
 
