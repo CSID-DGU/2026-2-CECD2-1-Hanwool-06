@@ -39,11 +39,27 @@
 .chat-speaker { display: block; margin-bottom: 6px; color: var(--mute); font-size: 11px; font-weight: 600; }
 .is-assistant .chat-speaker { display: flex; align-items: center; gap: 6px; }
 .chat-speaker-avatar { width: 26px; height: 26px; }
-.is-user .chat-speaker { text-align: right; }
-.chat-message-body { font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-message-body { font-size: 15px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .is-user .chat-message-body { padding: 10px 14px; border-radius: 10px 10px 2px 10px; background: var(--brand); color: #fff; }
+/* 답변의 문단·'- ' 목록과 판정 배지(관제 화면과 같은 색), 건수·사용량 숫자 */
+.chat-message-body p { margin: 0; }
+.chat-message-body ul { display: grid; gap: 6px; margin: 0; padding-left: 20px; }
+.chat-message-body > :is(p, ul) + :is(p, ul) { margin-top: 10px; }
+.chat-message-body li::marker { color: var(--mute); }
+.chat-message-body strong { font-weight: 700; }
+/* 배지는 본문과 같은 크기·기준선으로 두고 배경과 색만 더해, 문장 안에서 따로 놀지 않게 한다. */
+.chat-verdict { padding: 1px 4px; border-radius: var(--radius); font-weight: 600; white-space: nowrap; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.chat-verdict.is-ok { background: var(--ok-bg); color: var(--ok); }
+.chat-verdict.is-warn { background: var(--warn-bg); color: var(--warn); }
+.chat-verdict.is-alert { background: var(--alert-bg); color: var(--alert); }
 .chat-sources { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rule-soft); color: var(--sub); font-size: 12px; }
 .chat-sources > strong { color: var(--ink); font-size: 11px; }
+.chat-sources > summary { display: inline-flex; align-items: center; gap: 4px; color: var(--ink); font-size: 11px; font-weight: 700; list-style: none; cursor: pointer; }
+.chat-sources > summary::-webkit-details-marker { display: none; }
+.chat-sources > summary::after { content: "▾"; color: var(--mute); transition: transform .15s ease; }
+.chat-sources[open] > summary::after { transform: rotate(180deg); }
+.chat-sources > summary:hover { color: var(--brand); }
+.chat-sources > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 2px; }
 .chat-sources ul { display: grid; gap: 10px; margin: 8px 0 0; padding: 0; list-style: none; }
 .chat-sources a { color: var(--brand); font-weight: 600; text-decoration: underline; text-decoration-color: #bcc4e0; text-underline-offset: 3px; }
 .chat-sources a:hover { text-decoration-color: var(--brand); }
@@ -57,7 +73,7 @@
 .chat-composer { flex: none; padding: 14px 20px 12px; border-top: 1px solid var(--rule-soft); background: var(--paper); }
 .chat-input-row { display: flex; align-items: flex-end; gap: 10px; padding: 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
 .chat-input-row:focus-within { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
-.chat-input-row textarea { display: block; flex: 1; width: 100%; min-width: 0; max-height: 150px; padding: 1px 2px; resize: vertical; border: 0; outline: none; background: transparent; color: var(--ink); font: inherit; font-size: 14px; line-height: 1.6; }
+.chat-input-row textarea { display: block; flex: 1; width: 100%; min-width: 0; max-height: 150px; padding: 1px 2px; overflow-y: auto; resize: none; border: 0; outline: none; background: transparent; color: var(--ink); font: inherit; font-size: 14px; line-height: 1.6; }
 .chat-input-row textarea::placeholder { color: var(--mute); }
 .chat-send { display: grid; place-items: center; flex: none; width: 34px; height: 34px; padding: 7px; border: 0; border-radius: 6px; background: var(--brand); color: #fff; }
 .chat-send:hover:not(:disabled) { background: var(--brand-dark); }
@@ -78,4 +94,4 @@
   .chat-launcher-label { display: none; }
   .chat-heading h2 { font-size: 15px; }
 }
-@media (prefers-reduced-motion: reduce) { .chat-loading > span { animation: none; } .chat-launcher-mascot { transition: none; } .chat-launcher-label { transform: none; transition: opacity .12s linear; } }
+@media (prefers-reduced-motion: reduce) { .chat-loading > span { animation: none; } .chat-launcher-mascot { transition: none; } .chat-launcher-label { transform: none; transition: opacity .12s linear; } .chat-sources > summary::after { transition: none; } }

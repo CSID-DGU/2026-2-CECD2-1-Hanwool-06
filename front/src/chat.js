@@ -22,6 +22,45 @@ const CHAT_STAGES = {
 };
 export const chatStageText = (stage) => (typeof stage === "string" && Object.hasOwn(CHAT_STAGES, stage) ? CHAT_STAGES[stage] : "질문 보내는 중…");
 
+// 답변 본문은 줄 단위로 '- ' 목록과 문단으로 묶고, 판정 단어(배지)와 건수·사용량 숫자(굵게)만 표시한다.
+// HTML·링크로 해석하지 않고 글자 조각만 돌려준다. 화면은 이것을 React 텍스트로 그린다.
+// '아리수 누수위험'은 판정이 아니라 지표 이름이라 칠하지 않는다(상세 화면도 값에만 색을 쓴다).
+const ANSWER_VERDICTS = { 경고: "alert", 주의: "warn", 정상: "ok" };
+// 판정 단어는 앞에 한글이 붙으면('비정상') 빼고, '주의해/주의하/주의 깊게' 같은 당부도 뺀다.
+// 숫자는 건수·장소·횟수·사용량 단위가 붙은 것만('3개월', 날짜, 호선은 그대로).
+const ANSWER_MARKS = /(?<![가-힣])(경고|주의(?!해|하| 깊)|정상)|(?<![\d.,])((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s?(?:건|곳|회|번|개소|개(?!월)|㎥|m³|톤|%))/g;
+const ANSWER_ITEM = /^\s*[-•]\s+/;
+
+function answerParts(text) {
+  const parts = [];
+  let last = 0;
+  for (const match of text.matchAll(ANSWER_MARKS)) {
+    if (match.index > last) parts.push({ text: text.slice(last, match.index) });
+    parts.push(match[1] ? { text: match[1], tone: ANSWER_VERDICTS[match[1]] } : { text: match[2], strong: true });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
+export function chatAnswerBlocks(answer) {
+  const blocks = [];
+  let lines = [];
+  const flush = () => { if (lines.length) blocks.push({ type: "paragraph", parts: answerParts(lines.join("\n")) }); lines = []; };
+  for (const line of String(answer ?? "").split(/\r?\n/)) {
+    if (ANSWER_ITEM.test(line)) {
+      flush();
+      const item = answerParts(line.replace(ANSWER_ITEM, ""));
+      const previous = blocks.at(-1);
+      if (previous?.type === "list") previous.items.push(item);
+      else blocks.push({ type: "list", items: [item] });
+    } else if (line.trim()) lines.push(line);
+    else flush();
+  }
+  flush();
+  return blocks;
+}
+
 // 웹 검색 출처는 따로 연다: 서버가 검색 결과에서 확인한 https 주소(kind "web")만, 계정 정보 없이.
 // 답변 본문의 주소는 여전히 링크로 만들지 않는다.
 export function chatWebHref(source) {

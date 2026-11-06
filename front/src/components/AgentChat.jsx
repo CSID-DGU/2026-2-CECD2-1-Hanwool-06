@@ -1,14 +1,27 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { getChatStatus, streamChat } from "../api.js";
-import { chatDraftReducer, chatSourceHref, chatStageText, chatWebHref } from "../chat.js";
+import { chatAnswerBlocks, chatDraftReducer, chatSourceHref, chatStageText, chatWebHref } from "../chat.js";
 import mulsaemi from "../assets/mulsaemi/mulsaemi.webp";
 import mulsaemiProfile from "../assets/mulsaemi/mulsaemi-profile.webp";
 import "./agent-chat.css";
 
+function AnswerParts({ parts }) {
+  return parts.map((part, index) => part.tone ? <span key={index} className={`chat-verdict is-${part.tone}`}>{part.text}</span>
+    : part.strong ? <strong key={index}>{part.text}</strong> : part.text);
+}
+
+function AnswerBody({ text }) {
+  return <div className="chat-message-body">{chatAnswerBlocks(text).map((block, index) => block.type === "list"
+    ? <ul key={index}>{block.items.map((item, itemIndex) => <li key={itemIndex}><AnswerParts parts={item} /></li>)}</ul>
+    : <p key={index}><AnswerParts parts={block.parts} /></p>)}</div>;
+}
+
+// 출처는 접어 두고 건수만 보인다. 근거가 없을 때는 접을 것이 없어 그대로 알린다.
 function Sources({ sources, onNavigate }) {
-  return <footer className="chat-sources">
-    <strong>출처</strong>
-    {sources.length ? <ul>{sources.map((source, index) => {
+  if (!sources.length) return <footer className="chat-sources"><strong>출처</strong><p>조회 근거 없음</p></footer>;
+  return <details className="chat-sources">
+    <summary>출처 {sources.length}건</summary>
+    <ul>{sources.map((source, index) => {
       const href = chatSourceHref(source);
       const web = href ? null : chatWebHref(source);
       const label = typeof source?.label === "string" ? source.label : `자료 ${index + 1}`;
@@ -18,8 +31,8 @@ function Sources({ sources, onNavigate }) {
           : <span>{label}</span>}
         {typeof source?.summary === "string" && source.summary && <p>{source.summary}</p>}
       </li>;
-    })}</ul> : <p>조회 근거 없음</p>}
-  </footer>;
+    })}</ul>
+  </details>;
 }
 
 export default function AgentChat() {
@@ -62,6 +75,13 @@ export default function AgentChat() {
     const timer = setInterval(check, 60_000);
     return () => { clearInterval(timer); controller?.abort(); };
   }, [open]);
+  // 입력창은 글 길이에 맞춰 늘어나고, 최대 높이(CSS)를 넘으면 안에서 스크롤한다.
+  useLayoutEffect(() => {
+    const box = input.current;
+    if (!box) return;
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight}px`;
+  }, [open, draft]);
   useEffect(() => {
     if (open && transcript.current) transcript.current.scrollTop = messages.length || pendingQuestion || error ? transcript.current.scrollHeight : 0;
   }, [open, messages, pendingQuestion, sending, error]);
@@ -78,13 +98,14 @@ export default function AgentChat() {
     setMessages([]); setConversationId(null); updateDraft({ type: "edit", value: "" }); setPendingQuestion(""); setError("");
     input.current?.focus();
   }
-  async function submit(event, retry = false) {
+  async function submit(event, retry = false, preset = null) {
     event?.preventDefault();
-    const question = (retry ? pendingQuestion : draft).trim();
+    const question = (preset ?? (retry ? pendingQuestion : draft)).trim();
     if (!question || request.current) return;
     const controller = new AbortController();
     request.current = controller;
-    updateDraft({ type: "send", question, retry });
+    // 예시 질문은 재시도처럼 입력 중이던 글을 지우지 않는다.
+    updateDraft({ type: "send", question, retry: retry || preset != null });
     setSending(true); setStage(null); setError(""); setPendingQuestion(question);
     try {
       const result = await streamChat(question, conversationId, {
@@ -128,15 +149,17 @@ export default function AgentChat() {
         {!messages.length && !pendingQuestion && <div className="chat-welcome">
           <h3>어떤 자료를 찾아드릴까요?</h3>
           <p>역명과 날짜를 알려 주시면<br />사용량과 이상 징후를 확인해 드립니다.</p>
-          <div className="chat-examples">{["최근 7일 동안 경고가 나온 역을 알려 주세요", "경복궁역은 2025년 1월 1일부터 오늘까지 주의가 몇 번 있었나요?", "석촌역의 최근 7일 사용량을 그 전 7일과 비교해 주세요"].map((question) => <button type="button" key={question} onClick={() => { updateDraft({ type: "edit", value: question }); input.current?.focus(); }}>{question}<span aria-hidden="true">↗</span></button>)}</div>
+          <div className="chat-examples">{["최근 7일 동안 경고가 나온 역을 알려 주세요", "경복궁역은 2025년 1월 1일부터 오늘까지 주의가 몇 번 있었나요?", "석촌역의 최근 7일 사용량을 그 전 7일과 비교해 주세요"].map((question) => <button type="button" key={question} onClick={(event) => submit(event, false, question)}>{question}<span aria-hidden="true">↗</span></button>)}</div>
           <p className="chat-welcome-note">답변 아래 출처에서 날짜별 상세 자료를 확인하세요.</p>
         </div>}
         {messages.map((message, index) => <article key={index} className={`chat-message is-${message.role}`} aria-label={message.role === "user" ? "내 질문" : "물샘이 답변"}>
-          <span className="chat-speaker">{message.role === "assistant" && <img className="chat-speaker-avatar" src={mulsaemiProfile} alt="" />}{message.role === "user" ? "나" : "물샘이"}</span>
-          <div className="chat-message-body">{message.content}</div>
-          {message.role === "assistant" && <Sources sources={message.sources} onNavigate={navigateToSource} />}
+          {message.role === "assistant" ? <>
+            <span className="chat-speaker"><img className="chat-speaker-avatar" src={mulsaemiProfile} alt="" />물샘이</span>
+            <AnswerBody text={message.content} />
+            <Sources sources={message.sources} onNavigate={navigateToSource} />
+          </> : <div className="chat-message-body">{message.content}</div>}
         </article>)}
-        {pendingQuestion && <article className="chat-message is-user" aria-label="내 질문"><span className="chat-speaker">나</span><div className="chat-message-body">{pendingQuestion}</div></article>}
+        {pendingQuestion && <article className="chat-message is-user" aria-label="내 질문"><div className="chat-message-body">{pendingQuestion}</div></article>}
         {sending && <p className="chat-loading" role="status"><span aria-hidden="true" />{chatStageText(stage)}</p>}
         {error && <div className="chat-error"><p role="alert">{error}</p><button type="button" className="text-button" onClick={(event) => submit(event, true)} disabled={sending || !pendingQuestion}>다시 시도</button><span>실패한 질문을 다시 보내거나 새 질문을 입력하세요.</span></div>}
       </div>
