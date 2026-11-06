@@ -16,6 +16,9 @@
   --warn-bg: #fdf3e1;
   --ok: #1f7a4d;
   --ok-bg: #e8f4ec;
+  /* 노선도 점은 노선 위에서 보이도록 주의·정상을 글자색보다 밝게 쓴다. 범례 점도 이 값을 쓴다 */
+  --map-warn: #d48806;
+  --map-ok: #2e8b66;
   --radius: 4px;
   --page: 1280px;
   --gutter: 32px;
@@ -247,6 +250,7 @@ th.is-sorted .th-sort, th.is-sorted .th-sort-mark { color: var(--brand); }
 /* 입력 양식 안의 드롭다운 버튼: 다른 입력칸(select)과 같은 모양 */
 .dd-field { justify-content: space-between; width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper); color: var(--ink); font-size: 14px; font-weight: 400; text-align: left; }
 .dd-field .dd-button-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.form-field.is-empty .dd-field .dd-button-text { color: var(--mute); }   /* 아직 고르지 않은 칸의 "…을 선택하세요" */
 .dd-field:disabled { background: var(--ground); color: var(--sub); cursor: default; }
 .dd-field:disabled .dd-mark { visibility: hidden; }
 .dd-field:focus-visible, .dd-field[aria-expanded="true"] { outline: 2px solid var(--brand); outline-offset: -1px; }
@@ -281,8 +285,8 @@ th.is-sorted .th-sort, th.is-sorted .th-sort-mark { color: var(--brand); }
 .metro-node-hit { fill: transparent; }
 .metro-node-dot { fill: #6b7280; stroke: #fff; stroke-width: 5; }
 .metro-node--alert .metro-node-dot { fill: #c62828; }
-.metro-node--warn .metro-node-dot { fill: #d48806; }
-.metro-node--ok .metro-node-dot { fill: #2e8b66; }
+.metro-node--warn .metro-node-dot { fill: var(--map-warn); }
+.metro-node--ok .metro-node-dot { fill: var(--map-ok); }
 /* 판정 없는 상태도 같은 모양의 단색 점. 색만 다르다 */
 .metro-node--unknown .metro-node-dot { fill: #6a1b9a; }
 .metro-node--analysis_pending .metro-node-dot { fill: #2962ff; }
@@ -297,6 +301,9 @@ th.is-sorted .th-sort, th.is-sorted .th-sort-mark { color: var(--brand); }
 .map-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-top: 10px; }
 .map-legend-help { margin: 6px 0 0; color: var(--mute); font-size: 12px; }
 .map-legend .risk-badge { font-size: 12px; font-weight: 400; }
+/* 범례 점은 노선도 점과 같은 색. 글자는 읽히도록 진한 토큰색을 그대로 둔다 */
+.map-legend .risk-badge.risk-warn::before { background: var(--map-warn); }
+.map-legend .risk-badge.risk-ok::before { background: var(--map-ok); }
 /* 노선도의 청구 전용 역은 회색으로 채운 원이라 범례도 채운 점으로 맞춘다 */
 .map-legend .risk-badge.risk-billing::before { background: currentColor; box-shadow: none; }
 /* 범례 배지가 곧 위험도 선택 버튼: 누르면 그 위험도만, 다시 누르면 전체. 표 머리글의 위험도 조건과 같은 상태를 쓴다 */

@@ -264,8 +264,13 @@ function UserForm({ item, offices, onSaved }) {
 
 function MeterForm({ item, data, onSaved, canPosition, onExisting }) {
   const stations = [...new Map((data.meters || []).map((m) => [String(m.station_id), { id: m.station_id, name: m.station_name }])).values()].filter((s) => s.id);
+  // 역에 이미 등록된 계량기의 호선. 하나뿐이면 역을 고를 때 호선을 채우고, 환승역처럼 여럿이면 직접 고르게 한다.
+  const stationLines = (stationId) => [...new Set((data.meters || []).filter((m) => String(m.station_id) === String(stationId) && m.line).map((m) => String(m.line)))];
   const [isNewStation, setIsNewStation] = useState(!stations.length);
-  const [form, setForm] = useState({ provider: "arisu", customer_number: "", station_id: stations[0]?.id || "", station_name: "", line: "1", office_id: data.offices?.[0]?.id || "", display_name: "", address: "", purpose: "", tariff: "", active: true, daily_enabled: false, ...item });
+  // 새 계량기는 역·호선·담당 사업소를 비워 두고 고르게 한다(첫 항목을 미리 채우면 바꾸는 것을 잊고 잘못 등록된다).
+  // 고를 수 있는 사업소가 하나뿐이면(사업소 담당자) 그 사업소를 채운다.
+  const [form, setForm] = useState({ provider: "arisu", customer_number: "", station_id: "", station_name: "", line: "", office_id: data.offices?.length === 1 ? data.offices[0].id : "", display_name: "", address: "", purpose: "", tariff: "", active: true, daily_enabled: false, ...item });
+  const [autoLine, setAutoLine] = useState(false);   // 호선을 역에서 채웠는지. 직접 고른 호선은 역을 바꿔도 덮어쓰지 않는다
   const [meterNumber, setMeterNumber] = useState(item.metadata?.계량기번호 || "");
   const [arisuCustomerName, setArisuCustomerName] = useState(item.metadata?.arisu_customer_name || "");
   const [position, setPosition] = useState(null);
@@ -274,12 +279,20 @@ function MeterForm({ item, data, onSaved, canPosition, onExisting }) {
   const [busy, setBusy] = useState(false);
   const [duplicate, setDuplicate] = useState(null);
   const field = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  function chooseStation(value) {
+    const lines = stationLines(value);
+    const keepLine = form.line && !autoLine;
+    setForm((f) => ({ ...f, station_id: value, ...(keepLine ? {} : { line: lines.length === 1 ? lines[0] : "" }) }));
+    if (!keepLine) setAutoLine(lines.length === 1);
+    setPosition(null);
+  }
   async function submit(e) {
     e.preventDefault(); setBusy(true); setError(""); setDuplicate(null);
     try {
       if (form.provider === "arisu" && (!arisuCustomerName.trim() || arisuCustomerName.includes("*"))) throw new Error("별표(*)로 가려지지 않은 아리수 고지서상 성명을 입력하세요.");
-      // 역·담당 사업소 선택 칸은 브라우저 기본 선택 상자가 아니라 required 로 막을 수 없으므로 여기서 확인한다.
+      // 역·호선·담당 사업소 선택 칸은 브라우저 기본 선택 상자가 아니라 required 로 막을 수 없으므로 여기서 확인한다.
       if (!isNewStation && !form.station_id) throw new Error("역을 선택하세요.");
+      if (!form.line) throw new Error("호선을 선택하세요.");
       if (!form.office_id) throw new Error("담당 사업소를 선택하세요.");
       const body = {
         provider: form.provider, customer_number: form.customer_number.trim(),
@@ -317,9 +330,11 @@ function MeterForm({ item, data, onSaved, canPosition, onExisting }) {
     <label className="check-field"><input type="checkbox" checked={isNewStation} onChange={(e) => { setIsNewStation(e.target.checked); setPosition(null); }} />목록에 없는 새 역</label>
     {isNewStation ? <label className="form-field">역명<input required value={form.station_name} onChange={(e) => field("station_name", e.target.value)} placeholder="예: 동대문역" /></label>
       : <SelectField label="역" value={String(form.station_id ?? "")} options={stations.map((s) => ({ value: String(s.id), label: s.name }))} searchable searchPlaceholder="역명 검색" emptyText="일치하는 역이 없습니다."
-        onChange={(value) => { field("station_id", value); setPosition(null); }} />}
-    <div className="form-grid"><SelectField label="호선" value={String(form.line ?? "")} options={[1,2,3,4,5,6,7,8].map((line) => ({ value: String(line), label: `${line}호선` }))} onChange={(value) => field("line", value)} />
-      <SelectField label="담당 사업소" value={String(form.office_id ?? "")} options={(data.offices || []).map((o) => ({ value: String(o.id), label: o.name }))} onChange={(value) => field("office_id", value)} /></div>
+        className={form.station_id ? "" : "is-empty"} display={form.station_id ? undefined : "역을 선택하세요"} onChange={chooseStation} />}
+    <div className="form-grid"><SelectField label="호선" value={String(form.line ?? "")} options={[1,2,3,4,5,6,7,8].map((line) => ({ value: String(line), label: `${line}호선` }))}
+        className={form.line ? "" : "is-empty"} display={form.line ? undefined : "호선을 선택하세요"} onChange={(value) => { field("line", value); setAutoLine(false); }} />
+      <SelectField label="담당 사업소" value={String(form.office_id ?? "")} options={(data.offices || []).map((o) => ({ value: String(o.id), label: o.name }))}
+        className={form.office_id ? "" : "is-empty"} display={form.office_id ? undefined : "사업소를 선택하세요"} onChange={(value) => field("office_id", value)} /></div>
     <label className="form-field">계량기 이름 / 설치 위치<input required maxLength={100} value={form.display_name} onChange={(e) => field("display_name", e.target.value)} placeholder="예: 대합실 화장실" /></label>
     <label className="form-field">계량기번호<input value={meterNumber} onChange={(e) => setMeterNumber(e.target.value)} /></label>
     <label className="form-field">주소<input value={form.address} onChange={(e) => field("address", e.target.value)} /></label>
