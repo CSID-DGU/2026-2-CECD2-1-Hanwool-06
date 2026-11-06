@@ -16,9 +16,6 @@
   --warn-bg: #fdf3e1;
   --ok: #1f7a4d;
   --ok-bg: #e8f4ec;
-  /* 노선도 점은 노선 위에서 보이도록 주의·정상을 글자색보다 밝게 쓴다. 범례 점도 이 값을 쓴다 */
-  --map-warn: #d48806;
-  --map-ok: #2e8b66;
   --radius: 4px;
   --page: 1280px;
   --gutter: 32px;
@@ -284,9 +281,10 @@ th.is-sorted .th-sort, th.is-sorted .th-sort-mark { color: var(--brand); }
 .metro-node { cursor: pointer; }
 .metro-node-hit { fill: transparent; }
 .metro-node-dot { fill: #6b7280; stroke: #fff; stroke-width: 5; }
-.metro-node--alert .metro-node-dot { fill: #c62828; }
-.metro-node--warn .metro-node-dot { fill: var(--map-warn); }
-.metro-node--ok .metro-node-dot { fill: var(--map-ok); }
+/* 경고·주의·정상 점은 위험도 배지·건수 글자와 같은 토큰색을 쓴다 */
+.metro-node--alert .metro-node-dot { fill: var(--alert); }
+.metro-node--warn .metro-node-dot { fill: var(--warn); }
+.metro-node--ok .metro-node-dot { fill: var(--ok); }
 /* 판정 없는 상태도 같은 모양의 단색 점. 색만 다르다 */
 .metro-node--unknown .metro-node-dot { fill: #6a1b9a; }
 .metro-node--analysis_pending .metro-node-dot { fill: #2962ff; }
@@ -301,9 +299,6 @@ th.is-sorted .th-sort, th.is-sorted .th-sort-mark { color: var(--brand); }
 .map-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-top: 10px; }
 .map-legend-help { margin: 6px 0 0; color: var(--mute); font-size: 12px; }
 .map-legend .risk-badge { font-size: 12px; font-weight: 400; }
-/* 범례 점은 노선도 점과 같은 색. 글자는 읽히도록 진한 토큰색을 그대로 둔다 */
-.map-legend .risk-badge.risk-warn::before { background: var(--map-warn); }
-.map-legend .risk-badge.risk-ok::before { background: var(--map-ok); }
 /* 노선도의 청구 전용 역은 회색으로 채운 원이라 범례도 채운 점으로 맞춘다 */
 .map-legend .risk-badge.risk-billing::before { background: currentColor; box-shadow: none; }
 /* 범례 배지가 곧 위험도 선택 버튼: 누르면 그 위험도만, 다시 누르면 전체. 표 머리글의 위험도 조건과 같은 상태를 쓴다 */
