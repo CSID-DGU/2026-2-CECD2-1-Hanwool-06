@@ -265,7 +265,7 @@ function UserForm({ item, offices, onSaved }) {
 function MeterForm({ item, data, onSaved, canPosition, onExisting }) {
   const stations = [...new Map((data.meters || []).map((m) => [String(m.station_id), { id: m.station_id, name: m.station_name }])).values()].filter((s) => s.id);
   const [isNewStation, setIsNewStation] = useState(!stations.length);
-  const [form, setForm] = useState({ provider: "arisu", customer_number: "", station_id: stations[0]?.id || "", station_name: "", line: "1", office_id: data.offices?.[0]?.id || "", display_name: "", address: "", purpose: "", tariff: "", active: true, daily_enabled: false, ...item });
+  const [form, setForm] = useState({ provider: "arisu", customer_number: "", station_id: stations[0]?.id || "", station_name: "", line: "1", office_id: data.offices?.[0]?.id || "", display_name: "", address: "", purpose: "", tariff: "", active: true, daily_enabled: true, ...item });
   const [meterNumber, setMeterNumber] = useState(item.metadata?.계량기번호 || "");
   const [arisuCustomerName, setArisuCustomerName] = useState(item.metadata?.arisu_customer_name || "");
   const [position, setPosition] = useState(null);
@@ -307,11 +307,13 @@ function MeterForm({ item, data, onSaved, canPosition, onExisting }) {
   }
   return <form className="editor-form" onSubmit={submit}>
     <SelectField label="공급기관" disabled={Boolean(item.id)} value={form.provider} options={[{ value: "arisu", label: "서울 아리수" }, { value: "other", label: "기타 공급기관" }]}
-      onChange={(value) => { field("provider", value); if (value !== "arisu") field("daily_enabled", false); }} />
+      onChange={(value) => { field("provider", value); field("daily_enabled", value === "arisu"); }} />
     <label className="form-field">고객번호<input autoFocus required readOnly={Boolean(item.id)} pattern={form.provider === "arisu" ? "[0-9]{9}" : undefined} maxLength={100} inputMode={form.provider === "arisu" ? "numeric" : "text"} value={form.customer_number} onChange={(e) => field("customer_number", e.target.value)} /><small>{form.provider === "arisu" ? "앞자리 0을 포함한 9자리" : "공급기관의 계약번호"}</small></label>
     {form.provider === "arisu" && <>
       <label className="form-field">아리수 고지서상 성명<input required maxLength={100} pattern="[^*]*" title="별표(*)로 가려지지 않은 고지서상 성명을 입력하세요." value={arisuCustomerName} onChange={(e) => setArisuCustomerName(e.target.value)} /><small>고지서에 적힌 그대로 입력하세요. 별표(*)로 가려진 이름은 쓸 수 없습니다.</small></label>
       <SelectField label="수집할 자료" value={form.daily_enabled ? "daily" : "bills"} options={[{ value: "bills", label: "청구서만" }, { value: "daily", label: "일일 사용량 및 청구서" }]} onChange={(value) => field("daily_enabled", value === "daily")} />
+      {/* 새 계량기는 일일 사용량까지로 시작한다. 원격검침이 아닌 계량기는 서버가 첫 수집 때 청구서만으로 바꾼다. */}
+      {form.daily_enabled && <p className="form-hint">원격검침 계량기가 아니면 첫 수집 때 자동으로 청구서만 수집으로 바뀝니다.</p>}
     </>}
     {item.id && <p className="form-hint">고객번호가 바뀌었다면 새 계량기로 등록하세요.</p>}
     <label className="check-field"><input type="checkbox" checked={isNewStation} onChange={(e) => { setIsNewStation(e.target.checked); setPosition(null); }} />목록에 없는 새 역</label>

@@ -464,6 +464,11 @@ class ApplicationTest(unittest.TestCase):
              patch.object(config, 'ALLOWED_HOSTS', ['water.example.com']), \
              patch.object(config, 'DATA_DIR', Path(self.temp.name)):
             config.validate_deployment()
+            with patch.object(config, 'ARISU_REGISTER_RELATION', '9'):
+                config.validate_deployment()
+            with patch.object(config, 'ARISU_REGISTER_RELATION', '12'):   # not one of the site's relation choices
+                with self.assertRaisesRegex(RuntimeError, 'ARISU_REGISTER_RELATION'):
+                    config.validate_deployment()
             with patch.object(config, 'DATA_DIR', config.ROOT / 'data/runtime'):
                 with self.assertRaisesRegex(RuntimeError, '저장소 밖'):
                     config.validate_deployment()

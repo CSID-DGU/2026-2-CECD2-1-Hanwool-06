@@ -1,4 +1,5 @@
 """Current Arisu login and levy contracts, with synthetic responses only."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -135,6 +136,132 @@ class CurrentArisuTest(unittest.TestCase):
                 fetch.fetch_bill_window(session, '000000001', '2026-01', '2026-09', Path(directory))
             self.assertEqual(list(Path(directory).iterdir()), [])
 
+    def registration(self, *, flag='Y', used=0, reply=auth.REGISTERED, before=('000000001',), listed=('000000001', '000000009'),
+                     lookup=None, excluded=None, release_reply=None):
+        """A session answering the 고객번호등록 form's requests in the order the page sends them.
+        before/listed: the account's customers before and after. release_reply: the answer to removing another member's link."""
+        def answer(payload):
+            response = page(json.dumps(payload), auth.MKEY_URL)
+            response.json.return_value = payload
+            return response
+
+        def account(customers):
+            options = ''.join(f'<option value="{customer}">역</option>' for customer in customers)
+            return page(token('after') + f'<select name="searchMkey">{options}</select>')
+        session = Mock(headers={}, arisu_customer_numbers=frozenset({'000000001'}))
+        session.get.side_effect = [account(before), page(token('form'), auth.MKEY_URL + '/NR_mkeyList.do'), answer({'mkeyUseFlag': used}), account(listed)]
+        session.post.side_effect = [answer(excluded or {'success': True, 'blocked': False}), answer({'csNmFlag': flag, 'area': '1'}),
+                                    answer(lookup or {'success': True, 'dataMap': {'mkey': '000000009', 'csNm': '나역', 'gcMthCd': auth.REMOTE_READ}}),
+                                    *([page(release_reply, auth.MKEY_URL)] if release_reply is not None else []), page(reply, auth.MKEY_URL)]
+        return session
+
+    @staticmethod
+    def posted(session):
+        return [(call.args[0].rsplit('/', 1)[1], call.kwargs['data']) for call in session.post.call_args_list]
+
+    def test_registration_runs_the_forms_checks_then_inserts_once(self):
+        session = self.registration()
+        self.assertEqual(auth.register_customer(session, '000000009', '나역', '9'), 'registered')
+        posts = self.posted(session)
+        self.assertEqual([endpoint for endpoint, _ in posts],
+                         ['JR_mkeySearchExceptCheck.do', 'JR_getCsNmFlag.do', 'JR_mkeyInsertLookup.do', 'TR_mkeyInsertAction.do'])
+        self.assertEqual(posts[1][1], {'searchMkey': '000000009', 'searchCsNm': '나역'})
+        self.assertEqual(posts[-1][1], {'_csrf': 'form', 'cusNo': '000000009', 'userName': '나역', 'mkey': '000000009',
+                                        'searchMkey': '000000009', 'searchCsNm': '나역', 'csRelationCd': '9'})
+        self.assertEqual(session.get.call_args_list[2].kwargs['params'], {'searchMkey': '000000009'})
+        self.assertEqual(session.arisu_customer_numbers, frozenset({'000000001', '000000009'}))
+        self.assertEqual(session.headers['X-CSRF-TOKEN'], 'after')
+
+    def test_registration_starts_from_a_fresh_account_list(self):
+        # The list read at login can be partial. A fresh one that has the customer leaves nothing to register or remove.
+        session = self.registration(before=('000000001', '000000009'), used=1, release_reply=auth.RELEASED)
+        self.assertEqual(auth.register_customer(session, '000000009', '나역', '9', release=True), 'listed')
+        session.post.assert_not_called()
+        self.assertEqual(session.get.call_count, 1)
+        self.assertEqual(session.arisu_customer_numbers, frozenset({'000000001', '000000009'}))
+        # An empty list is a failed lookup, never an empty account: nothing is asked or removed on its strength.
+        empty = self.registration(before=(), used=1, release_reply=auth.RELEASED)
+        with self.assertRaises(ValueError):
+            auth.register_customer(empty, '000000009', '나역', '9', release=True)
+        empty.post.assert_not_called()
+
+    def test_another_members_link_is_removed_only_when_asked_and_before_the_insert(self):
+        session = self.registration(used=1, release_reply=auth.RELEASED)
+        self.assertEqual(auth.register_customer(session, '000000009', '나역', '9', release=True), 'released')
+        posts = self.posted(session)
+        self.assertEqual([endpoint for endpoint, _ in posts[3:]], ['NR_mkeyDeleteUpdateAction.do', 'TR_mkeyInsertAction.do'])
+        self.assertEqual(posts[3][1], {'searchMkey': '000000009', 'searchCsNm': '나역'})
+        self.assertEqual(session.arisu_customer_numbers, frozenset({'000000001', '000000009'}))
+        # The site did not confirm the removal: its notice is the refusal, and nothing is inserted.
+        unconfirmed = self.registration(used=1, release_reply='처리할 수 없습니다.')
+        with self.assertRaises(auth.RegistrationRefused) as refused:
+            auth.register_customer(unconfirmed, '000000009', '나역', '9', release=True)
+        self.assertEqual(str(refused.exception), '처리할 수 없습니다.')
+        self.assertEqual([endpoint for endpoint, _ in self.posted(unconfirmed)][3:], ['NR_mkeyDeleteUpdateAction.do'])
+        # A free number needs no removal, with or without leave to remove.
+        free = self.registration()
+        self.assertEqual(auth.register_customer(free, '000000009', '나역', '9', release=True), 'registered')
+        self.assertFalse(any('Delete' in endpoint for endpoint, _ in self.posted(free)))
+
+    def test_a_meter_not_read_remotely_is_never_registered_or_taken_from_another_member(self):
+        # No remote meter, no daily readings: registering would gain nothing, so the other member keeps the number.
+        manual = self.registration(lookup={'success': True, 'dataMap': {'mkey': '000000009', 'gcMthCd': '01'}}, used=1, release_reply=auth.RELEASED)
+        with self.assertRaises(auth.NotRemoteMeter):
+            auth.register_customer(manual, '000000009', '나역', '9', release=True)
+        self.assertEqual([endpoint for endpoint, _ in self.posted(manual)], ['JR_mkeySearchExceptCheck.do', 'JR_getCsNmFlag.do', 'JR_mkeyInsertLookup.do'])
+        self.assertEqual(manual.get.call_count, 2)   # the account list and the form; who holds the number is never asked
+        # Arisu not saying how the meter is read is no answer either way: nothing is registered, and it may be asked again.
+        silent = self.registration(lookup={'success': True, 'dataMap': {'mkey': '000000009'}}, used=1, release_reply=auth.RELEASED)
+        with self.assertRaises(ValueError):
+            auth.register_customer(silent, '000000009', '나역', '9', release=True)
+        self.assertEqual(silent.post.call_count, 3)
+
+    def test_remote_read_asks_only_the_lookup(self):
+        for method, expected in (('03', True), ('01', False), ('', None), (None, None)):
+            with self.subTest(method=method):
+                response = page('{}', auth.MKEY_URL)
+                response.json.return_value = {'success': True, 'dataMap': {'mkey': '000000009', 'gcMthCd': method}}
+                session = Mock(headers={})
+                session.post.return_value = response
+                self.assertIs(auth.remote_read(session, '000000009', '나역'), expected)
+                self.assertEqual(self.posted(session), [('JR_mkeyInsertLookup.do', {'mkey': '000000009', 'searchMkey': '000000009', 'searchCsNm': '나역'})])
+                session.get.assert_not_called()
+
+    def test_registration_refusals_stop_before_the_insert_and_never_unlink_another_member(self):
+        cases = [('name', {'flag': 'N'}, '불일치', 2), ('other member', {'used': 1}, '다른 회원', 3), ('unreadable use flag', {'used': 'x'}, '다른 회원', 3),
+                 ('excluded', {'excluded': {'success': True, 'blocked': True}}, '검색 제외', 1),
+                 ('policy', {'lookup': {'success': False, 'message': '50세대 이상은 등록할 수 없습니다.'}}, '50세대', 3)]
+        for label, answers, text, posts in cases:
+            with self.subTest(label):
+                session = self.registration(**answers)
+                with self.assertRaises(auth.RegistrationRefused) as refused:
+                    auth.register_customer(session, '000000009', '나역', '9')   # without leave to remove another member's link
+                self.assertIn(text, str(refused.exception))
+                self.assertEqual(session.post.call_count, posts)
+                self.assertFalse(any('TR_mkeyInsertAction' in endpoint or 'Delete' in endpoint for endpoint, _ in self.posted(session)))
+                self.assertEqual(session.arisu_customer_numbers, frozenset({'000000001'}))
+
+    def test_registration_reply_decides_and_the_account_list_confirms(self):
+        session = self.registration(reply='이미 등록된 고객번호입니다.')
+        with self.assertRaises(auth.RegistrationRefused) as refused:
+            auth.register_customer(session, '000000009', '나역', '9')
+        self.assertEqual(str(refused.exception), '이미 등록된 고객번호입니다.')
+        # An answer without the site's own notice is not a refusal: the caller may ask again.
+        for label, unclear in (('html', self.registration(reply='<html><body>오류</body></html>')),
+                               ('not listed', self.registration(listed=('000000001',))),
+                               ('no notice', self.registration(lookup={'success': False})),
+                               ('other customer', self.registration(lookup={'success': True, 'dataMap': {'mkey': '000000008'}}))):
+            with self.subTest(label), self.assertRaises(ValueError):
+                auth.register_customer(unclear, '000000009', '나역', '9')
+            self.assertEqual(unclear.arisu_customer_numbers, frozenset({'000000001'}))
+        with self.assertRaises(auth.LoginError):
+            auth.register_customer(self.registration(reply='<input name="mbrId"><input name="pwd">'), '000000009', '나역', '9')
+        untouched = self.registration()
+        for name, relation in (('나역', ''), ('나역', '12'), ('', '9')):
+            with self.assertRaises(ValueError):
+                auth.register_customer(untouched, '000000009', name, relation)
+        untouched.get.assert_not_called()
+        untouched.post.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

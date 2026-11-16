@@ -15,7 +15,7 @@ from back.pipelines import incremental as inc
 from back.pipelines.daily_water import scraper as water
 from back.pipelines.refresh import publish_data
 from back.pipelines import refresh
-from back.scripts.billing_etl.i121_crawler.auth import ConfigurationError, LoginError
+from back.scripts.billing_etl.i121_crawler.auth import ConfigurationError, LoginError, NotRemoteMeter, RegistrationRefused
 
 
 class IncrementalTest(unittest.TestCase):
@@ -247,6 +247,196 @@ class IncrementalTest(unittest.TestCase):
         self.assertEqual(result['status'], 'partial')   # a login problem is not a reason to drop the meter
         with db.connect() as conn:
             self.assertEqual(conn.execute("SELECT daily_enabled FROM meters WHERE id='meter'").fetchone()[0], 1)
+
+    def registering(self):
+        """A named daily meter the account does not list yet, and one collection of it."""
+        meter = self.meter | {'metadata': {'arisu_customer_name': '가역'}}
+        session = Mock(arisu_customer_numbers=frozenset({'000000002'}), arisu_login_error=None)
+
+        def collect(with_meter=meter, remote=True):
+            with patch.object(inc, 'fetch_month', side_effect=lambda _s, _m, month, **_: [self.row()] if month == '2026-06' else []) as water, \
+                    patch.object(inc, 'collect_bills', return_value={'rows': [self.bill()], 'errors': []}), \
+                    patch.object(inc, 'remote_read', return_value=remote):   # what Arisu's record says about how the meter is read
+                return inc.collect_meter(with_meter, session=session), water
+        return meter, session, collect
+
+    def checkpoint(self):
+        return json.loads((config.DATA_DIR / 'collection/000000001.json').read_text())
+
+    def daily_enabled(self):
+        with db.connect() as conn:
+            return conn.execute("SELECT daily_enabled FROM meters WHERE id='meter'").fetchone()[0]
+
+    def test_meter_not_read_remotely_keeps_bills_only_without_registering_or_waiting(self):
+        meter, session, collect = self.registering()
+
+        def reasons():
+            with db.connect() as conn:
+                return [json.loads(r[0])['reason'] for r in conn.execute("SELECT details FROM audit_log WHERE action='meter_daily_disabled'")]
+
+        # Not in the account: Arisu's record says there is no remote meter, so one run settles it and nothing is registered.
+        # That holds with registration switched off or on, and when only the registration's own check finds it out.
+        for relation, remote, refusal in (('', False, None), ('9', False, None), ('9', None, NotRemoteMeter('원격검침 계량기가 아닙니다'))):
+            with self.subTest(relation=relation, remote=remote):
+                with db.connect() as conn:
+                    conn.execute('UPDATE meters SET daily_enabled=1')
+                    conn.execute('DELETE FROM audit_log')
+                with patch.object(config, 'ARISU_REGISTER_RELATION', relation), patch.object(inc, 'register_customer', side_effect=refusal) as asked:
+                    result, water = collect(remote=remote)
+                self.assertEqual(asked.call_count, 1 if refusal else 0)
+                self.assertEqual((result['status'], self.daily_enabled(), reasons()), ('success', 0, ['원격검침 계량기가 아님']))
+                self.assertIn('원격검침 계량기가 아니라 일일 사용량이 없습니다. 청구서만 수집하도록 바꿨습니다', result['message'])
+                self.assertIn('청구 전용 계량기', result['message'])
+                self.assertNotIn('다음 수집에서도', result['message'])
+                water.assert_not_called()
+                self.assertEqual((self.checkpoint()['unlisted_runs'], self.checkpoint()['register_refused']), (0, None))
+        # In the account but never read: the same record is asked once the month queries come back empty.
+        with db.connect() as conn:
+            conn.execute('UPDATE meters SET daily_enabled=1')
+            conn.execute('DELETE FROM audit_log')
+        listed = Mock(arisu_customer_numbers=frozenset({'000000001'}), arisu_login_error=None)
+
+        def empty(**answer):
+            with patch.object(inc, 'fetch_month', return_value=[]), patch.object(inc, 'collect_bills', return_value={'rows': [self.bill()], 'errors': []}), \
+                    patch.object(inc, 'remote_read', **answer) as asked:
+                return inc.collect_meter(meter, session=listed), asked
+
+        for answer in ({'return_value': True}, {'return_value': None}, {'side_effect': ConnectionError('private')}):
+            result, asked = empty(**answer)   # a remote meter with no reading yet, or no answer: it keeps waiting
+            self.assertEqual((asked.call_count, self.daily_enabled(), reasons()), (1, 1, []))
+            self.assertNotIn('private', result['message'])
+        result, asked = empty(return_value=False)
+        self.assertEqual((asked.call_args.args[1:], self.daily_enabled(), reasons()), (('000000001', '가역'), 0, ['원격검침 계량기가 아님']))
+        self.assertIn('청구서만 수집하도록 바꿨습니다', result['message'])
+        # A meter that has given readings is never second-guessed, even in a month without any.
+        with db.connect() as conn:
+            conn.execute('UPDATE meters SET daily_enabled=1')
+        with patch.object(inc, 'remote_read') as asked, patch.object(inc, 'collect_bills', return_value={'rows': [], 'errors': []}):
+            with patch.object(inc, 'fetch_month', side_effect=lambda _s, _m, month, **_: [self.row()] if month == '2026-06' else []):
+                inc.collect_meter(meter, session=listed)
+            with patch.object(inc, 'fetch_month', return_value=[]):
+                inc.collect_meter(meter, session=listed)
+        asked.assert_not_called()
+        self.assertEqual(self.daily_enabled(), 1)
+
+    def test_another_members_link_is_released_once_and_a_partial_list_registers_nothing(self):
+        meter, session, collect = self.registering()
+        leave = []   # whether each request came with leave to remove another member's link
+
+        def register(outcome):
+            def run(with_session, customer, name, relation, release):
+                leave.append(release)
+                with_session.arisu_customer_numbers = frozenset({'000000001', '000000002'})
+                return outcome
+            return run
+
+        def registrations():
+            with db.connect() as conn:
+                return [json.loads(r[0]) for r in conn.execute("SELECT details FROM audit_log WHERE action='meter_arisu_registered'")]
+
+        with patch.object(config, 'ARISU_REGISTER_RELATION', '9'):
+            # A fresh list already had the customer: the list from login was partial, and nothing was registered.
+            with patch.object(inc, 'register_customer', side_effect=register('listed')):
+                result, water = collect()
+            self.assertEqual(result['status'], 'success')
+            self.assertNotIn('등록했습니다', result['message'])
+            water.assert_called()
+            self.assertEqual((registrations(), self.checkpoint()['released']), ([], False))
+            # Held by another member: their link is removed for the registration, and that is on record.
+            session.arisu_customer_numbers = frozenset({'000000002'})
+            with patch.object(inc, 'register_customer', side_effect=register('released')):
+                result, water = collect()
+            self.assertIn('아리수 계정에 고객번호를 등록했습니다(다른 회원의 기존 연결은 해제했습니다)', result['message'])
+            water.assert_called()
+            self.assertEqual((registrations(), self.checkpoint()['released']), ([{'released_other_member': True}], True))
+            # If that member registers the number again, it is not taken from them a second time: a person decides.
+            session.arisu_customer_numbers = frozenset({'000000002'})
+            with patch.object(inc, 'register_customer', side_effect=RegistrationRefused('다른 회원에게 등록된 고객번호입니다.')) as asked:
+                result, water = collect()
+            self.assertEqual(asked.call_args.kwargs, {'release': False})
+            self.assertIn('등록하지 못했습니다(다른 회원에게 등록된 고객번호입니다)', result['message'])
+            water.assert_not_called()
+            self.assertEqual((len(registrations()), self.checkpoint()['released'], self.daily_enabled()), (1, True, 1))
+        self.assertEqual(leave, [True, True])
+
+    def test_missing_daily_customer_is_registered_once_then_collected(self):
+        meter, session, collect = self.registering()
+
+        def register(with_session, customer, name, relation, release):
+            self.assertEqual((customer, name, relation, release), ('000000001', '가역', '9', True))
+            with_session.arisu_customer_numbers = frozenset({'000000001', '000000002'})
+            return 'registered'
+
+        # Off unless the server names the relation to declare: the earlier warning stays as it was.
+        for relation in ('', '12'):
+            with patch.object(config, 'ARISU_REGISTER_RELATION', relation), patch.object(inc, 'register_customer') as asked:
+                result, _ = collect(meter | {'customer_number': '000000001'})
+            asked.assert_not_called()
+            self.assertIn('고객 목록에 이 고객번호가 없습니다', result['message'])
+            (config.DATA_DIR / 'collection/000000001.json').unlink()
+        with patch.object(config, 'ARISU_REGISTER_RELATION', '9'), patch.object(inc, 'register_customer', side_effect=register) as asked:
+            # no bill name, nothing to verify the customer with
+            self.assertIn('고객 목록에 이 고객번호가 없습니다', collect(self.meter)[0]['message'])
+            asked.assert_not_called()
+            (config.DATA_DIR / 'collection/000000001.json').unlink()
+            result, water = collect()
+            self.assertEqual((result['status'], asked.call_count), ('success', 1))
+            self.assertIn('아리수 계정에 고객번호를 등록했습니다', result['message'])
+            water.assert_called()
+            collect()   # listed now: nothing more to ask
+            self.assertEqual(asked.call_count, 1)
+        state = self.checkpoint()
+        self.assertEqual((self.daily_enabled(), state['unlisted_runs'], state['register_refused'], state['released']), (1, 0, None, False))
+        with db.connect() as conn:
+            self.assertEqual([(r[0], json.loads(r[1])) for r in conn.execute("SELECT action,details FROM audit_log WHERE action LIKE 'meter_%'")],
+                             [('meter_arisu_registered', {'released_other_member': False})])
+
+    def test_refused_registration_is_reported_and_asked_again_only_after_a_change(self):
+        meter, session, collect = self.registering()
+        refusal = RegistrationRefused('고객번호와 사용자명이 불일치합니다.')
+        with patch.object(config, 'ARISU_REGISTER_RELATION', '9'), patch.object(inc, 'register_customer', side_effect=refusal) as asked:
+            result, water = collect()
+            self.assertEqual((result['status'], asked.call_count, self.daily_enabled()), ('partial', 1, 1))
+            self.assertIn('등록하지 못했습니다(고객번호와 사용자명이 불일치합니다). 다음 수집에서도 계정에 없으면', result['message'])
+            self.assertFalse(result['retryable'])
+            water.assert_not_called()
+            self.assertEqual(self.checkpoint()['register_refused'], '가역')
+            # The same name is not asked twice; the second miss ends daily monitoring as before.
+            result, _ = collect()
+            self.assertEqual((asked.call_count, self.daily_enabled()), (1, 0))
+            self.assertIn('등록되지 않은 고객번호라 일일 관제에서 제외', result['message'])
+            # Switching daily collection back on is a new request, and so is a corrected name.
+            result, _ = collect()
+            self.assertEqual(asked.call_count, 2)
+            self.assertIn('등록하지 못해(고객번호와 사용자명이 불일치합니다) 일일 관제에서 제외', result['message'])
+            self.assertIsNone(self.checkpoint()['register_refused'])
+        (config.DATA_DIR / 'collection/000000001.json').unlink()
+        with patch.object(config, 'ARISU_REGISTER_RELATION', '9'), patch.object(inc, 'register_customer', side_effect=refusal) as asked:
+            collect()
+            collect(meter | {'metadata': {'arisu_customer_name': '가역장'}})
+            self.assertEqual([call.args[2] for call in asked.call_args_list], ['가역', '가역장'])
+
+    def test_registration_that_could_not_be_asked_is_retried_without_counting_a_miss(self):
+        _, session, collect = self.registering()
+        for error, retryable, message in ((ConnectionError('private'), True, '다음 수집 때 다시 시도'), (ValueError('private'), False, '다음 수집 때 다시 시도'),
+                                          (LoginError('private'), False, '인증이 만료')):
+            with self.subTest(type(error).__name__), patch.object(config, 'ARISU_REGISTER_RELATION', '9'), \
+                    patch.object(inc, 'register_customer', side_effect=error) as asked:
+                for attempt in (1, 2, 3):
+                    result, water = collect()
+                    self.assertEqual((asked.call_count, result['status'], result['retryable']), (attempt, 'partial', retryable))
+                    self.assertIn(message, result['message'])
+                    self.assertNotIn('private', result['message'])
+                    self.assertNotIn('고객 목록에 이 고객번호가 없습니다', result['message'])
+                    water.assert_not_called()
+                self.assertEqual((self.daily_enabled(), self.checkpoint()['unlisted_runs'], self.checkpoint()['register_refused']), (1, 0, None))
+        # An empty list or a failed login is no ground for registering anything.
+        for unusable in (Mock(arisu_customer_numbers=frozenset(), arisu_login_error=None),
+                         Mock(arisu_customer_numbers=frozenset(), arisu_login_error='LoginError')):
+            with patch.object(config, 'ARISU_REGISTER_RELATION', '9'), patch.object(inc, 'register_customer') as asked, \
+                    patch.object(inc, 'fetch_month', return_value=[]), patch.object(inc, 'collect_bills', return_value={'rows': [self.bill()], 'errors': []}):
+                inc.collect_meter(self.meter | {'metadata': {'arisu_customer_name': '가역'}}, session=unusable)
+            asked.assert_not_called()
 
     def test_billing_gap_windows_do_not_recrawl_fifteen_stored_years(self):
         with db.connect() as conn:

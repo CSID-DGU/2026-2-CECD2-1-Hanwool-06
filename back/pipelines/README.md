@@ -41,6 +41,21 @@ or train the model. Use the explicit CLI below for those operations.
 The current Arisu login uses the site's issued CSRF token and `mbrId`/`pwd` form.
 The account's registered customer list is checked for daily readings only. Public bills
 use customer number and the exact registered name, independently of member registration.
+Daily readings exist only for meters Arisu reads remotely, and its registration lookup says how a
+meter is read (`gcMthCd`, 03 for remote). A daily meter that is not read remotely, and has never given
+a reading, is switched to bills only with that reason instead of waiting for readings that cannot come.
+With `ARISU_REGISTER_RELATION` set (the site's 사용자와의 관계 code, 1-11), a remote-read daily meter
+missing from that list is first added to the account with the meter's bill name, through the same
+checks and insert as 마이페이지 > 고객번호관리 > 고객번호등록. A meter that is not read remotely is never
+registered, and never taken from another member. A refusal (name mismatch, a number another member
+holds, ...) is reported with the site's reason and not repeated until the bill name changes or daily
+collection is switched back on. A number another member holds is taken over the way the site's own
+form does after its 연결정보를 해제하시겠습니까 question: their link is removed, then the number is
+registered, and the audit log records it (`released_other_member`). That happens once per meter. If
+that member registers the number again, it is reported as a refusal for a person to settle, so two
+accounts never take a number from each other unattended. Before any of this the account list is read
+again, because the list from login can be partial and the site reports this account's own customers
+as held too. Unset (the default), nothing is registered.
 A daily access failure does not prevent bill collection. Historical JSON readings and the latest unbilled
 JSON readings are merged by observation date, through the last completed day.
 A day the source itself leaves missing or invalid is excluded, reported once as a notice
@@ -164,7 +179,7 @@ version from the last 24 hours plus at least the three latest versions.
 
 ## 자료 갱신 (운영 메모)
 
-- **사용량·청구서(아리수)**: `.env`에 `ARISU_USER_ID`, `ARISU_USER_PWD`를 넣으면 화면의 **정보 업데이트**로 수집하고, 매일 08:00(한국시간)에 자동 수집합니다(서버가 켜져 있어야 함). 시간 초과·연결 같은 일시 오류로 실패하거나 서버 재시작으로 중단된 계량기는 30분 간격으로 두 번까지 다시 수집하고(로그인·설정·자료 오류는 계정 잠김을 막으려고 다시 시도하지 않음), 그 뒤에도 실패가 남으면 총괄 관리자에게 하루 한 번 메일을 보냅니다(메일 설정 필요). 음수·빈 검침은 그날만 제외하고 0으로 바꾸지 않습니다. 이런 날은 아리수 원자료에 값이 없는 것이라 수집 실패로 세지 않고 결과에 한 번 안내하며, 기억해 두었다가 다시 알리지 않습니다. 아리수 계정의 고객 목록에 두 번 연속 없는 고객번호는 일일 관제에서 자동으로 빼고 청구서만 수집합니다(계정에 등록한 뒤 계량기 관리에서 다시 켤 수 있음). 목록이 통째로 비어 오면 조회 실패로 보고 설정을 바꾸지 않습니다.
+- **사용량·청구서(아리수)**: `.env`에 `ARISU_USER_ID`, `ARISU_USER_PWD`를 넣으면 화면의 **정보 업데이트**로 수집하고, 매일 08:00(한국시간)에 자동 수집합니다(서버가 켜져 있어야 함). 시간 초과·연결 같은 일시 오류로 실패하거나 서버 재시작으로 중단된 계량기는 30분 간격으로 두 번까지 다시 수집하고(로그인·설정·자료 오류는 계정 잠김을 막으려고 다시 시도하지 않음), 그 뒤에도 실패가 남으면 총괄 관리자에게 하루 한 번 메일을 보냅니다(메일 설정 필요). 음수·빈 검침은 그날만 제외하고 0으로 바꾸지 않습니다. 이런 날은 아리수 원자료에 값이 없는 것이라 수집 실패로 세지 않고 결과에 한 번 안내하며, 기억해 두었다가 다시 알리지 않습니다. 아리수 계정의 고객 목록에 두 번 연속 없는 고객번호는 일일 관제에서 자동으로 빼고 청구서만 수집합니다(계정에 등록한 뒤 계량기 관리에서 다시 켤 수 있음). 일일 검침값은 원격검침 계량기에만 있고, 아리수의 등록 조회가 검침 방법을 알려 줍니다(`gcMthCd`, 03이 원격검침). 일일 수집을 켰지만 원격검침이 아니고 검침값이 한 번도 없던 계량기는, 올 수 없는 자료를 기다리지 않고 그 사유와 함께 청구서만 수집으로 바꿉니다. 서버에 `ARISU_REGISTER_RELATION`(아리수 고객번호등록의 '사용자와의 관계' 코드. 1 본인, 9 관리인, 10 기타 등 1~11)을 두면, 목록에 없는 원격검침 계량기는 수집이 먼저 고지서상 성명으로 아리수 계정에 고객번호를 등록합니다. 원격검침이 아닌 계량기는 등록하지 않고 다른 회원의 연결도 건드리지 않습니다. 아리수가 거절하면(성명 불일치, 다른 회원에게 등록된 번호 등) 그 사유를 결과에 적고, 성명을 고치거나 일일 수집을 다시 켜기 전에는 다시 요청하지 않습니다. 다른 회원에게 등록된 번호는 아리수 등록 화면에서 '연결정보를 해제하시겠습니까?'에 예를 눌렀을 때와 같이 그 연결을 해제한 뒤 등록하고, 감사 기록에 남깁니다(`released_other_member`). 한 계량기에 한 번만 그렇게 하며, 그 회원이 번호를 다시 등록해 가면 두 계정이 번호를 말없이 주고받지 않도록 거절로 알려 사람이 정하게 합니다. 등록에 앞서 계정의 고객 목록을 한 번 더 읽어, 로그인 때 목록이 덜 온 것뿐이면 아무것도 등록하거나 해제하지 않습니다. 목록이 통째로 비어 오면 조회 실패로 보고 설정을 바꾸지 않습니다.
 - **승하차**: 일별 API(`SEOUL_PSGR_KEY`, 최근 1주일치만 제공)와 서울 열린데이터광장 월별 파일(OA-12914, 키 불필요, 그 달이 지난 뒤 게시)로 채웁니다.
 - **모델**: 웹 안의 자동 수집은 모델을 다시 돌리지 않습니다(운영 서버는 08:05 `water-refresh`가 돌립니다). 수집 뒤 아래 명령을 실행하면 수집된 마지막 날까지 위험도가 갱신됩니다. 모델을 돌릴 때마다 지금까지 수집된 청구서까지 합쳐 청구서 기준값을 다시 만듭니다.
 

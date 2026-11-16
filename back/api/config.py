@@ -31,6 +31,10 @@ SMTP_PASS = os.getenv('SMTP_PASS', '')
 ALERT_FROM = os.getenv('ALERT_FROM', '') or SMTP_USER
 TODAY_OVERRIDE = os.getenv('TODAY_OVERRIDE', '').strip()
 COLLECTION_WORKER_ENABLED = os.getenv('COLLECTION_WORKER_ENABLED', 'true').lower() == 'true'
+# 일일 수집 계량기의 고객번호가 아리수 계정에 없을 때 수집이 대신 등록하며 보내는 '사용자와의 관계' 코드(1 본인 … 9 관리인, 10 기타).
+# 비우면(기본) 자동으로 등록하지 않는다. 아리수 고객번호등록 화면에서 사람이 고르던 값이라 코드가 정하지 않는다.
+# 켜면 다른 아리수 회원에게 등록된 번호는 그 연결을 해제하고 등록한다(한 계량기에 한 번, 감사 기록에 남음).
+ARISU_REGISTER_RELATION = os.getenv('ARISU_REGISTER_RELATION', '').strip()
 # NCP Object Storage(S3 호환). 끄면(기본) 모든 보관 훅은 아무 일도 하지 않는다. 값은 환경변수로만 주고 코드에 적지 않는다.
 OBJECT_STORAGE_ENABLED = os.getenv('OBJECT_STORAGE_ENABLED', 'false').lower() == 'true'
 OBJECT_STORAGE_ENDPOINT = os.getenv('OBJECT_STORAGE_ENDPOINT', 'https://kr.object.ncloudstorage.com').strip()
@@ -57,6 +61,10 @@ def validate_deployment():
         raise RuntimeError('APP_ENV는 development 또는 production이어야 합니다.')
     if not 1 <= SESSION_HOURS <= 24:
         raise RuntimeError('SESSION_HOURS는 1~24 사이여야 합니다.')
+    if ARISU_REGISTER_RELATION:
+        from back.scripts.billing_etl.i121_crawler.auth import RELATIONS   # the crawler reads this module, so not at the top
+        if ARISU_REGISTER_RELATION not in RELATIONS:
+            raise RuntimeError('ARISU_REGISTER_RELATION은 아리수 고객번호등록의 관계 코드 1~11 중 하나여야 합니다.')
     if OBJECT_STORAGE_ENABLED:
         if not (OBJECT_STORAGE_BUCKET and OBJECT_STORAGE_ACCESS_KEY and OBJECT_STORAGE_SECRET_KEY):
             raise RuntimeError('OBJECT_STORAGE_ENABLED=true 이면 OBJECT_STORAGE_BUCKET, OBJECT_STORAGE_ACCESS_KEY, OBJECT_STORAGE_SECRET_KEY 가 필요합니다.')

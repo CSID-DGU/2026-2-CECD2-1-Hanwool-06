@@ -12,7 +12,8 @@ from back.pipelines.common import collection_lock, customer_number, merge_csv, t
 from back.pipelines.daily_water.scraper import FIELDS, fetch_day_statuses, fetch_month, fetch_smart_status
 from back.pipelines.refresh import publish_data
 from back.scripts.billing_etl.crawl_bills import collect_bills
-from back.scripts.billing_etl.i121_crawler.auth import ConfigurationError, CustomerAccessError, LoginError, collection_session, transient
+from back.scripts.billing_etl.i121_crawler.auth import (RELATIONS, ConfigurationError, CustomerAccessError, LoginError,
+    NotRemoteMeter, RegistrationRefused, collection_session, register_customer, remote_read, transient)
 from back.scripts.billing_etl.i121_crawler.fetch import shift_month
 
 logger = logging.getLogger(__name__)
@@ -156,10 +157,52 @@ def _collect(meter, session, notify):
     login_rejected = isinstance(login_error, str) and not transient(login_error)
     retry = isinstance(login_error, str) and not login_rejected
     notes = []
+    name = meter.get('metadata', {}).get('arisu_customer_name', '')
+    # The bill name Arisu last refused to register. It is not asked again while the meter stays in daily monitoring.
+    refused_name, refusal, register_failed = state.get('register_refused'), None, False
+    # Another member's link to this customer is removed for a registration at most once. If they register the number
+    # again, the next move is a person's: otherwise the two accounts would quietly take it from each other every day.
+    released = bool(state.get('released'))
+    not_remote = False   # Arisu says the meter is not read remotely: there are no daily readings, so bills only
+    # A customer the account does not hold, on a usable list from a real login.
+    missing = daily_enabled and isinstance(allowed, frozenset) and bool(allowed) and cid not in allowed and not isinstance(login_error, str)
+    if missing and name and not observations:
+        # Whoever holds the number, a meter that is not read remotely has no daily readings. Arisu's own record
+        # settles that before anything is registered, and whether or not registration is switched on.
+        try:
+            not_remote = remote_read(session, cid, name) is False
+        except Exception as exc:
+            logger.warning('Arisu reading method check failed (%s)', type(exc).__name__)
+    if missing and not not_remote and config.ARISU_REGISTER_RELATION in RELATIONS and name and name != refused_name:
+        notify('아리수 계정에 고객번호를 등록하는 중입니다.')
+        try:
+            outcome = register_customer(session, cid, name, config.ARISU_REGISTER_RELATION, release=not released)
+        except NotRemoteMeter:
+            not_remote = True
+        except RegistrationRefused as exc:
+            refused_name, refusal = name, str(exc).rstrip('.')
+        except Exception as exc:
+            # Could not ask, or could not read the answer: neither a refusal nor a miss. The next collection asks again.
+            logger.warning('Arisu customer registration failed (%s)', type(exc).__name__)
+            register_failed = True
+            errors.append('아리수 인증이 만료되었습니다' if isinstance(exc, LoginError)
+                          else '일일 사용량: 아리수 계정에 고객번호를 등록하지 못했습니다. 다음 수집 때 다시 시도합니다')
+            retry = retry or transient(exc)
+        else:
+            allowed = session.arisu_customer_numbers
+            if outcome != 'listed':   # 'listed': a fresh list already had the customer, so the list from login was only partial
+                released = released or outcome == 'released'
+                notes.append('아리수 계정에 고객번호를 등록했습니다' + ('(다른 회원의 기존 연결은 해제했습니다)' if outcome == 'released' else ''))
+                with db.connect() as conn:
+                    db.audit(conn, None, 'meter_arisu_registered', meter['id'], {'released_other_member': outcome == 'released'})
+    if isinstance(allowed, frozenset) and cid in allowed:
+        refused_name = None
     # Consecutive usable customer lists that did not contain this customer.
     unlisted = 0 if isinstance(allowed, frozenset) and cid in allowed else state.get("unlisted_runs", 0)
     if daily_enabled and isinstance(allowed, frozenset) and cid not in allowed:
-        if isinstance(login_error, str):
+        if register_failed or not_remote:
+            pass
+        elif isinstance(login_error, str):
             errors.append('일일 사용량: 아리수 계정 설정 또는 로그인을 확인해 주세요' if login_rejected else '일일 사용량: 아리수 서버에 연결하지 못했습니다')
         elif not allowed:
             # An empty list is a failed lookup, not proof that every customer left the account.
@@ -167,15 +210,18 @@ def _collect(meter, session, notify):
         elif unlisted < 1:
             # A single list without this customer may be a partial response; switch off only when it repeats.
             unlisted += 1
-            errors.append('일일 사용량: 아리수 계정의 고객 목록에 이 고객번호가 없습니다. 다음 수집에서도 없으면 일일 관제에서 제외합니다')
+            errors.append(f'일일 사용량: 아리수 계정에 고객번호를 등록하지 못했습니다({refusal}). 다음 수집에서도 계정에 없으면 일일 관제에서 제외합니다'
+                          if refusal else '일일 사용량: 아리수 계정의 고객 목록에 이 고객번호가 없습니다. 다음 수집에서도 없으면 일일 관제에서 제외합니다')
         else:
             unlisted += 1
             # The account cannot read this customer's daily meter: keep bills only instead of failing every day.
             with db.connect() as conn:
                 conn.execute("UPDATE meters SET daily_enabled=0,updated_at=? WHERE id=?", (db.now(), meter["id"]))
                 db.audit(conn, None, "meter_daily_disabled", meter["id"], {"reason": "아리수 계정에 등록되지 않은 고객번호"})
-            notes.append('일일 사용량: 아리수 계정에 등록되지 않은 고객번호라 일일 관제에서 제외하고 청구서만 수집합니다. '
-                         '계정에 등록한 뒤 계량기 관리에서 다시 켜세요')
+            refused_name = None   # switching daily collection back on asks Arisu once more
+            notes.append((f'일일 사용량: 아리수 계정에 고객번호를 등록하지 못해({refusal}) ' if refusal
+                          else '일일 사용량: 아리수 계정에 등록되지 않은 고객번호라 ')
+                         + '일일 관제에서 제외하고 청구서만 수집합니다. 계정에 등록한 뒤 계량기 관리에서 다시 켜세요')
         months = []
     else:
         months = water_months(observations, end, checked) if daily_enabled else []
@@ -219,6 +265,20 @@ def _collect(meter, session, notify):
             retry = retry or transient(exc)
     if gaps:   # a notice beside usable readings; with no usable reading at all, the source itself may be broken
         (notes if fresh else errors).append(f"{', '.join(gaps)} 아리수 검침값 누락·오류로 해당 관측을 제외했습니다")
+    # A daily meter the account holds but that has never given a reading may not be a remote meter at all.
+    # Arisu's own record settles that, so such a meter does not wait for a first reading that cannot come.
+    if (daily_enabled and not not_remote and not observations and not fresh and not errors and name
+            and isinstance(allowed, frozenset) and cid in allowed):
+        try:
+            not_remote = remote_read(session, cid, name) is False
+        except Exception as exc:
+            logger.warning('Arisu reading method check failed (%s)', type(exc).__name__)
+    if not_remote:
+        with db.connect() as conn:
+            conn.execute("UPDATE meters SET daily_enabled=0,updated_at=? WHERE id=?", (db.now(), meter["id"]))
+            db.audit(conn, None, "meter_daily_disabled", meter["id"], {"reason": "원격검침 계량기가 아님"})
+        notes.append('일일 사용량: 원격검침 계량기가 아니라 일일 사용량이 없습니다. 청구서만 수집하도록 바꿨습니다')
+        daily_enabled = False
     notify("청구서를 조회하는 중입니다.")
     bills = []
     bill_end = today().strftime('%Y-%m')
@@ -290,6 +350,7 @@ def _collect(meter, session, notify):
     known_issues -= set(fresh)   # a day the source has since corrected is an ordinary observation again
     try:
         write_json(state_path, {"water_checked": checked, "water_excluded": sorted(known_issues), "unlisted_runs": unlisted,
+                                "register_refused": refused_name, "released": released,
                                 "bill_retry_from": None, "bill_retry_windows": failed_windows, "updated_at": db.now()})
     except OSError as exc:
         logger.error("Collection checkpoint write failed (%s)", type(exc).__name__)
