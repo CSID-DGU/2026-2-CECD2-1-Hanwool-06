@@ -247,6 +247,7 @@ th.is-sorted .th-sort, th.is-sorted .th-sort-mark { color: var(--brand); }
 /* 입력 양식 안의 드롭다운 버튼: 다른 입력칸(select)과 같은 모양 */
 .dd-field { justify-content: space-between; width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--paper); color: var(--ink); font-size: 14px; font-weight: 400; text-align: left; }
 .dd-field .dd-button-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.form-field.is-empty .dd-field .dd-button-text { color: var(--mute); }   /* 아직 고르지 않은 칸의 "…을 선택하세요" */
 .dd-field:disabled { background: var(--ground); color: var(--sub); cursor: default; }
 .dd-field:disabled .dd-mark { visibility: hidden; }
 .dd-field:focus-visible, .dd-field[aria-expanded="true"] { outline: 2px solid var(--brand); outline-offset: -1px; }
@@ -280,9 +281,10 @@ th.is-sorted .th-sort, th.is-sorted .th-sort-mark { color: var(--brand); }
 .metro-node { cursor: pointer; }
 .metro-node-hit { fill: transparent; }
 .metro-node-dot { fill: #6b7280; stroke: #fff; stroke-width: 5; }
-.metro-node--alert .metro-node-dot { fill: #c62828; }
-.metro-node--warn .metro-node-dot { fill: #d48806; }
-.metro-node--ok .metro-node-dot { fill: #2e8b66; }
+/* 경고·주의·정상 점은 위험도 배지·건수 글자와 같은 토큰색을 쓴다 */
+.metro-node--alert .metro-node-dot { fill: var(--alert); }
+.metro-node--warn .metro-node-dot { fill: var(--warn); }
+.metro-node--ok .metro-node-dot { fill: var(--ok); }
 /* 판정 없는 상태도 같은 모양의 단색 점. 색만 다르다 */
 .metro-node--unknown .metro-node-dot { fill: #6a1b9a; }
 .metro-node--analysis_pending .metro-node-dot { fill: #2962ff; }

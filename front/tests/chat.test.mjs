@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
-import { chatDraftReducer, chatSourceHref, chatStageText, chatWebHref } from "../src/chat.js";
+import { chatAnswerBlocks, chatDraftReducer, chatSourceHref, chatStageText, chatWebHref } from "../src/chat.js";
 import { getChatStatus, setCsrfToken, streamChat } from "../src/api.js";
 import { buildStations, detailHref, isDetailDate } from "../src/pages/Detail/data.js";
 
@@ -31,6 +31,23 @@ test("a delayed failure and retry preserve the next question already being compo
   assert.equal(draft, nextQuestion);
   draft = chatDraftReducer(draft, { type: "send", question: nextQuestion });
   assert.equal(draft, "");
+});
+
+test("answers group '- ' lines into lists and mark only verdicts and counted numbers", () => {
+  const blocks = chatAnswerBlocks("최근 7일 결과입니다.\n둘째 줄\n\n- 온수역: 경고 2건\n- 석촌역: 정상, 1,234.5㎥\n\n아리수 누수위험 역은 없습니다.");
+  assert.deepEqual(blocks.map((block) => block.type), ["paragraph", "list", "paragraph"]);
+  assert.deepEqual(blocks[0].parts, [{ text: "최근 7일 결과입니다.\n둘째 줄" }]);
+  assert.deepEqual(blocks[1].items, [
+    [{ text: "온수역: " }, { text: "경고", tone: "alert" }, { text: " " }, { text: "2건", strong: true }],
+    [{ text: "석촌역: " }, { text: "정상", tone: "ok" }, { text: ", " }, { text: "1,234.5㎥", strong: true }],
+  ]);
+  // 지표 이름('아리수 누수위험'), 낱말 안의 판정('비정상'), 당부('주의해'), 기간·날짜 숫자는 표시하지 않는다.
+  for (const text of ["아리수 누수위험 역은 없습니다.", "비정상 값", "주의해 주세요", "3개월 동안", "2026-10-23 기준"]) {
+    assert.deepEqual(chatAnswerBlocks(text), [{ type: "paragraph", parts: [{ text }] }], text);
+  }
+  assert.deepEqual(chatAnswerBlocks("주의 11곳")[0].parts, [{ text: "주의", tone: "warn" }, { text: " " }, { text: "11곳", strong: true }]);
+  assert.deepEqual(chatAnswerBlocks(""), []);
+  assert.deepEqual(chatAnswerBlocks("<b>경고</b>")[0].parts.map((part) => part.text).join(""), "<b>경고</b>");
 });
 
 test("chat sources link only to the exact server-provided meter and date", () => {
