@@ -105,6 +105,16 @@ class ApplicationTest(unittest.TestCase):
             self.assertEqual(manager.post('/api/meters', json={'provider': 'arisu', 'customer_number': '000000006', 'station_name': '서부역', 'office_id': '서부', 'display_name': '서부역'}).status_code, 403)
             self.assertEqual([i['meter_id'] for i in manager.get('/api/summary').json()['items']], ['000000001'])
             self.assertEqual([m['id'] for m in manager.get('/api/meters').json()], ['000000001'])   # 계량기 관리 목록
+        # 서로 적으면 서로 보고, 인근의 인근(서부 → 동부 → 남부)은 열지 않는다
+        with patch.dict(neighbors.NEIGHBOR_OFFICES, {'동부': ('서부', '남부'), '서부': ('동부',)}, clear=True):
+            payload = west.get('/api/data').json()
+            self.assertEqual({m['id']: m['editable'] for m in payload['meters']}, {'000000001': False, '000000002': True})
+
+    def test_neighbor_office_settings(self):
+        for office, near in neighbors.NEIGHBOR_OFFICES.items():
+            self.assertTrue(office.endswith('영업사업소'), office)
+            self.assertTrue(near and all(n.endswith('영업사업소') and n != office for n in near), office)
+        self.assertEqual(set(neighbors.NEIGHBOR_OFFICES['보라매영업사업소']), {'당산영업사업소', '화곡영업사업소', '신대방영업사업소'})
 
     def test_scoped_session_registry_documents_and_alert(self):
         for path in ('/api/data','/api/meters','/api/users','/api/summary','/api/export.xlsx','/api/bills/000000001:2026-08:정기분/pdf'):
