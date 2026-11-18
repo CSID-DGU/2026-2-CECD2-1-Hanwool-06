@@ -13,7 +13,7 @@ from urllib.parse import unquote
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from pypdf import PdfReader
-from back.api import catalog, collection, config, data_access, db, main, mailer, manage
+from back.api import catalog, collection, config, data_access, db, main, mailer, manage, neighbors
 
 
 class ApplicationTest(unittest.TestCase):
@@ -66,6 +66,45 @@ class ApplicationTest(unittest.TestCase):
         response = self.client.post('/api/users', json={'email': email, 'password': 'ManagerPass!234', 'name': '담당자', 'role': 'office_admin', 'office_ids': [office], 'active': True})
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
+
+    def test_neighbor_offices_are_view_only(self):
+        """인근 사업소는 화면·청구서·Excel·통계로 조회만 하고, 고치기·수집·분석·알림·확인 결과는 담당 사업소만 한다."""
+        with db.connect() as c:
+            c.execute("INSERT INTO offices VALUES('남부','남부')")
+            c.execute("INSERT INTO stations VALUES('남부역','남부역',30,40)")
+            c.execute('INSERT INTO meters(id,provider,customer_number,station_id,office_id,display_name,line,daily_enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                      ('000000005', 'arisu', '000000005', '남부역', '남부', '남부역', '4', 0, db.now(), db.now()))
+        self.login()
+        self.create_manager()
+        self.create_manager('west@example.com', '서부')
+        manager, west = TestClient(main.app, base_url='http://localhost'), TestClient(main.app, base_url='http://localhost')
+        with patch.dict(neighbors.NEIGHBOR_OFFICES, {'동부': ('서부', '없는사업소')}, clear=True):
+            self.login(manager, 'staff@example.com', 'ManagerPass!234')
+            self.login(west, 'west@example.com', 'ManagerPass!234')
+            payload = manager.get('/api/data').json()
+            self.assertEqual(set(payload['stations']), {'000000001', '000000002'})   # 남부는 인근이 아니다
+            self.assertEqual({m['id']: m['editable'] for m in payload['meters']}, {'000000001': True, '000000002': False})
+            self.assertEqual({o['id']: o['editable'] for o in payload['offices']}, {'동부': True, '서부': False})
+            self.assertEqual(set(west.get('/api/data').json()['stations']), {'000000002'})   # 한쪽 방향만 연다
+            # 조회
+            self.assertEqual(manager.get('/api/bills/000000002:2026-08:정기분/pdf').status_code, 200)
+            self.assertEqual(manager.get('/api/risk-labels?meter_id=000000002').status_code, 200)
+            rows = list(load_workbook(io.BytesIO(manager.get('/api/export.xlsx?kind=bills&office_id=서부').content)).active.values)
+            self.assertEqual([row[1] for row in rows[1:]], ['000000002'])
+            self.assertEqual(manager.get('/api/export.xlsx?kind=bills&meter_id=000000002').status_code, 200)
+            self.assertEqual(manager.get('/api/stats?office_id=서부').status_code, 200)
+            self.assertEqual(manager.get('/api/export.xlsx?office_id=남부').status_code, 403)
+            self.assertEqual(manager.get('/api/export.xlsx?meter_id=000000005').status_code, 404)
+            # 담당 사업소만
+            self.assertEqual(manager.patch('/api/meters/000000002', json={'display_name': '바꿈'}).status_code, 404)
+            self.assertEqual(manager.delete('/api/meters/000000002').status_code, 404)
+            self.assertEqual(manager.post('/api/collection', json={'meter_id': '000000002'}).status_code, 404)
+            self.assertEqual(manager.post('/api/analyze', json={'meter_id': '000000002'}).status_code, 404)
+            self.assertEqual(manager.post('/api/alert', json={'meter_id': '000000002'}).status_code, 404)
+            self.assertEqual(manager.post('/api/risk-labels', json={'meter_id': '000000002', 'date': '2026-08-31', 'label': 'normal'}).status_code, 404)
+            self.assertEqual(manager.post('/api/meters', json={'provider': 'arisu', 'customer_number': '000000006', 'station_name': '서부역', 'office_id': '서부', 'display_name': '서부역'}).status_code, 403)
+            self.assertEqual([i['meter_id'] for i in manager.get('/api/summary').json()['items']], ['000000001'])
+            self.assertEqual([m['id'] for m in manager.get('/api/meters').json()], ['000000001'])   # 계량기 관리 목록
 
     def test_scoped_session_registry_documents_and_alert(self):
         for path in ('/api/data','/api/meters','/api/users','/api/summary','/api/export.xlsx','/api/bills/000000001:2026-08:정기분/pdf'):

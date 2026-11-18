@@ -326,7 +326,7 @@ def _with_collected_daily(daily):
     return combined
 
 
-def data_version(office_ids=None):
+def data_version(office_ids=None, editable_office_ids=None):
     """Fingerprint of everything payload() reads for this scope, without building it.
 
     A commit rewrites the database file or leaves frames in its WAL, and publication points
@@ -338,7 +338,7 @@ def data_version(office_ids=None):
     wal = _stat(f"{config.APP_DB_PATH}-wal")
     arisu_paths = sorted((config.DATA_DIR / 'arisu').glob('*.json'))
     arisu_paths += sorted((config.DATA_DIR / 'raw/remote_meter').glob('*/statuses.json'))
-    state = (office_ids, str(today()), _stat(config.APP_DB_PATH), wal if wal and wal[1] else None,
+    state = (office_ids, editable_office_ids, str(today()), _stat(config.APP_DB_PATH), wal if wal and wal[1] else None,
              _signature(_sources()[1]), _signature(arisu_paths), _signature(_collected_paths()))
     return hashlib.sha256(repr(state).encode()).hexdigest()[:32]
 
@@ -353,9 +353,13 @@ def meter_data_mode(meter, daily):
     return "pending" if meter["active"] and meter["daily_enabled"] else "billing_only"
 
 
-def payload(allowed_office_ids=None):
+def payload(allowed_office_ids=None, editable_office_ids=None):
+    """allowed: 볼 수 있는 사업소(담당+인근), editable: 고칠 수 있는 담당 사업소. None이면 전체."""
+    editable = lambda office_id: editable_office_ids is None or office_id in editable_office_ids
     with db.connect() as conn:
         meters = list_meters(conn, allowed_office_ids)
+        for m in meters:
+            m["editable"] = editable(m["office_id"])   # 인근 사업소 계량기는 화면에서 조회 전용
         ids = {m["id"] for m in meters}
         entries = {mid: [] for mid in ids}
         # SQL scope keeps forbidden bill content outside the response builder.
@@ -365,7 +369,7 @@ def payload(allowed_office_ids=None):
                 bill = json.loads(row["payload"])
                 bill.update(id=row["id"], gubun=row["gubun"], source=row["source"], notice_number=row['notice_number'])
                 entries[row["meter_id"]].append(bill)
-        offices = [{"id": r["id"], "name": r["name"]} for r in conn.execute("SELECT * FROM offices ORDER BY name")
+        offices = [{"id": r["id"], "name": r["name"], "editable": editable(r["id"])} for r in conn.execute("SELECT * FROM offices ORDER BY name")
                    if allowed_office_ids is None or r["id"] in allowed_office_ids]
     all_daily, all_risk = data_sources()
     all_daily = _with_collected_daily(all_daily)

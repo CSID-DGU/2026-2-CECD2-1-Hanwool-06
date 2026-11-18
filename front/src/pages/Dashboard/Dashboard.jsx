@@ -106,7 +106,8 @@ export default function Dashboard({ data, collection }) {
   return <main className="app-shell">
     <PageHeader daily={monitored.length} alerts={monitored.filter((s) => s.risk === "alert").length} warnings={monitored.filter((s) => s.risk === "warn").length}
       dataChecks={monitored.filter((s) => s.risk === "unknown").length} />
-    <CollectionPanel collection={collection} meters={data.meters || []} />
+    {/* 전체 정보 업데이트는 담당 사업소 계량기만 수집한다(인근 사업소는 조회 전용) */}
+    <CollectionPanel collection={collection} meters={(data.meters || []).filter((m) => m.editable !== false)} />
     <div className="view-tabs" role="group" aria-label="보기 선택">
       <button type="button" aria-pressed={!billingOnly} onClick={() => switchView("daily")} title="일일 사용량을 수집하는 계량기">일일 관제 <span>{dailyStations.length}</span></button>
       <button type="button" aria-pressed={billingOnly} onClick={() => switchView("billing")} title="일일 관제를 포함한 모든 계량기의 최근 청구서">청구 확인 <span>{billingStations.length}</span></button>

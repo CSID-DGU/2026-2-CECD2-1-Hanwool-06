@@ -49,7 +49,8 @@ export default function DetailPage({ data, hash, collection }) {
         onChange={(value) => selectMeter(station.lines.find((l) => l.meterId === value))} />
     </div>
     <StationHeader station={station} line={line} selectMeter={selectMeter} requestedDate={requestedDate} dateRisk={dateRisk} />
-    <CollectionPanel collection={collection} meters={data.meters || []} meterId={line.meterId} />
+    {/* 인근 사업소 계량기(editable: false)는 조회만: 정보 업데이트·위험도 확인 결과를 두지 않는다 */}
+    {line.editable !== false && <CollectionPanel collection={collection} meters={data.meters || []} meterId={line.meterId} />}
     {requestedDate && <p className="data-notice" role="status">조회 기준일: {requestedDate}{billingOnly ? " · 청구서만 수집하는 계량기라 일일 사용량과 위험도 분석이 없습니다." : " · 해당 날짜의 일일 사용량과 위험도를 표시합니다."}</p>}
     {params.has("date") && !requestedDate && <p className="data-notice" role="status">조회 날짜가 올바르지 않아 최신 자료를 표시합니다. 날짜는 YYYY-MM-DD 형식으로 입력해 주세요.</p>}
     {riskNote?.reason ? <StallNotice note={riskNote} meterNumber={line.계량기번호} />
@@ -96,7 +97,7 @@ function StationHeader({ station, line, selectMeter, requestedDate, dateRisk }) 
       <h1>{station.역명}</h1>
       <p className="dt-meter-label">{line.display_name || "기본 계량기"} <span>고객번호 {line.고객번호}</span></p>
       <dl className="dt-facts">
-        <div><dt>영업사업소</dt><dd>{line.영업사업소}</dd></div>
+        <div><dt>영업사업소</dt><dd>{line.영업사업소}{line.editable === false && <small> · 인근 사업소(조회 전용)</small>}</dd></div>
         <div><dt>위치</dt><dd>{line.주소}</dd></div>
         <div><dt>수집 자료</dt><dd>{line.dataMode === "billing_only" ? "청구서" : line.dataMode === "pending" ? "일일 사용량(첫 수집 대기), 청구서" : "일일 사용량, 청구서"}</dd></div>
         {CONTRACT_TAG[line.contractKind] && <div><dt>계약 종류</dt><dd>{CONTRACT_TAG[line.contractKind]}: {CONTRACT_NOTE[line.contractKind]}</dd></div>}
@@ -157,7 +158,7 @@ function RiskPanel({ line, requestedDate, readings = [], latestRisk }) {
         <Stat label="오차" value={Number.isFinite(day.error) ? `${day.error > 0 ? "+" : ""}${ton(day.error)} 톤` : "—"} />
         <Stat label="예측 대비" value={signedPct(day.pct, "비율 없음")} />
       </dl>
-      {!isStatic && (day.severity === "주의" || day.severity === "경고") && <RiskLabel key={day.date} meterId={line.meterId} date={day.date} saved={labels[day.date]} loadError={labelError}
+      {!isStatic && line.editable !== false && (day.severity === "주의" || day.severity === "경고") && <RiskLabel key={day.date} meterId={line.meterId} date={day.date} saved={labels[day.date]} loadError={labelError}
         onSaved={(saved) => setLabels((current) => ({ ...current, [saved.date]: saved }))} />}
       </> : <EmptyNote>{latestRisk && selected > latestRisk ? "아직 판정 전입니다." : `${selected}에는 위험도 분석 결과가 없습니다.`}</EmptyNote>}
       {reading?.status && reading.status !== "정상" && <p className="dt-risk-reading">계량기 상태: {reading.status}</p>}

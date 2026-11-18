@@ -213,13 +213,14 @@ def password(body: Password, request: Request, user=Depends(auth.current_user)):
 
 @app.get('/api/data')
 def data(version: str | None = None, user=Depends(auth.current_user)):
-    scope = auth.office_scope(user)
+    # 담당 사업소와 인근 사업소를 보여 주고, 계량기마다 고칠 수 있는지(담당 사업소인지) 표시한다.
+    scope, editable = auth.view_scope(user), auth.office_scope(user)
     # Fingerprint first: a change during the build then costs one more reload, never stale data.
-    current = catalog.data_version(scope)
+    current = catalog.data_version(scope, editable)
     if version == current:
         return Response(status_code=204)
     # The payload is plain JSON data already; skip FastAPI's per-item encoder for this large response.
-    return JSONResponse({'version': current} | catalog.payload(scope))
+    return JSONResponse({'version': current} | catalog.payload(scope, editable))
 
 
 @app.get('/api/offices')
@@ -234,8 +235,10 @@ def meters(include_deleted: bool = False, user=Depends(auth.current_user)):
         return catalog.list_meters(c, auth.office_scope(user), include_deleted=include_deleted)
 
 
-def get_meter(c, meter_id, user, include_deleted=False):
-    meter = next((m for m in catalog.list_meters(c, auth.office_scope(user), include_deleted=include_deleted) if m['id'] == meter_id), None)
+def get_meter(c, meter_id, user, include_deleted=False, view=False):
+    """담당 사업소의 계량기. view=True면 인근 사업소까지(조회만 하는 곳에서만 쓴다). 범위 밖은 없는 것과 같다."""
+    scope = auth.view_scope(user) if view else auth.office_scope(user)
+    meter = next((m for m in catalog.list_meters(c, scope, include_deleted=include_deleted) if m['id'] == meter_id), None)
     if meter is None:
         raise HTTPException(404, '계량기를 찾을 수 없습니다.')
     return meter
@@ -607,7 +610,7 @@ class RiskLabel(StrictModel):
 @app.get('/api/risk-labels')
 def risk_labels(meter_id: str, user=Depends(auth.current_user)):
     with db.connect() as c:
-        get_meter(c, meter_id, user)
+        get_meter(c, meter_id, user, view=True)
         return {r['date']: dict(r) for r in c.execute(
             'SELECT l.date,l.label,l.severity,l.updated_at,u.name AS user_name FROM risk_labels l JOIN users u ON u.id=l.user_id WHERE l.meter_id=? ORDER BY l.date', (meter_id,))}
 
@@ -732,7 +735,7 @@ def bill_pdf(bill_id: str, download: bool = False, dl: str | None = None, user=D
     with db.connect() as c:
         bill = c.execute('SELECT * FROM bills WHERE id=?', (bill_id,)).fetchone()
         # A bill outside the caller's scope is indistinguishable from a missing one.
-        meter = bill and next((m for m in catalog.list_meters(c, auth.office_scope(user)) if m['id'] == bill['meter_id']), None)
+        meter = bill and next((m for m in catalog.list_meters(c, auth.view_scope(user)) if m['id'] == bill['meter_id']), None)
         if not meter:
             raise HTTPException(404, '청구내역을 찾을 수 없습니다.')
     payload = json.loads(bill['payload']) | {'id': bill['id'], 'source': bill['source'], 'gubun': bill['gubun'], 'notice_number': bill['notice_number']}
@@ -763,12 +766,13 @@ def export_rows(user, kind, start=None, end=None, office_id=None, line=None, met
     start, end = checked_date(start or '2000-01-01'), checked_date(end or today().isoformat())
     if start > end:
         raise HTTPException(422, '시작일은 종료일보다 늦을 수 없습니다.')
+    # Excel·통계는 조회라 인근 사업소까지 내려받을 수 있다.
     if office_id:
-        auth.require_office(user, office_id)
+        auth.require_view_office(user, office_id)
     with db.connect() as c:
-        available = catalog.list_meters(c, auth.office_scope(user))
+        available = catalog.list_meters(c, auth.view_scope(user))
         if meter_id:
-            get_meter(c, meter_id, user)
+            get_meter(c, meter_id, user, view=True)
         wanted = parse_meter_ids(meter_ids)
         # A meter outside the caller's scope is indistinguishable from a missing one.
         if wanted is not None and not wanted <= {m['id'] for m in available}:
@@ -807,7 +811,7 @@ def export(kind: str = 'usage', start: str | None = None, end: str | None = None
            meter_ids: str | None = None, dl: str | None = None, user=Depends(auth.current_user)):
     rows = [{k: v for k, v in row.items() if not k.startswith('_')} for row in export_rows(user, kind, start, end, office_id, line, meter_id, meter_ids)]
     with db.connect() as c:
-        meter = get_meter(c, meter_id, user) if meter_id else None
+        meter = get_meter(c, meter_id, user, view=True) if meter_id else None
     name = quote(export_filename(kind, meter, start, end), safe='')
     return mark_download(Response(documents.export_xlsx(rows), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers={'Content-Disposition': f"attachment; filename=water-{kind}.xlsx; filename*=UTF-8''{name}"}), dl)
 

@@ -5,6 +5,7 @@ import secrets
 import time
 from fastapi import Depends, HTTPException, Request
 from . import config, db
+from .neighbors import NEIGHBOR_OFFICES
 
 COOKIE = 'water_session'
 
@@ -87,9 +88,27 @@ def require_manageable(actor, target):
 
 
 def office_scope(user):
+    """담당 사업소. 수정·수집·알림·분석과 업무 요약은 이 범위만 쓴다."""
     return None if user['role'] == 'superadmin' else user['office_ids']
+
+
+def view_scope(user):
+    """조회 범위: 담당 사업소와 그 인근 사업소(neighbors.py). 화면·청구서·Excel·통계가 쓴다."""
+    if user['role'] == 'superadmin':
+        return None
+    own = set(user['office_ids'])
+    with db.connect() as c:
+        ids = {r['name']: r['id'] for r in c.execute('SELECT id,name FROM offices')}
+    near = {ids[n] for name, office in ids.items() if office in own for n in NEIGHBOR_OFFICES.get(name, ()) if n in ids}
+    return sorted(own | near)
 
 
 def require_office(user, office_id):
     if user['role'] != 'superadmin' and office_id not in user['office_ids']:
         raise HTTPException(403, '담당 사업소의 데이터만 관리할 수 있습니다.')
+
+
+def require_view_office(user, office_id):
+    scope = view_scope(user)
+    if scope is not None and office_id not in scope:
+        raise HTTPException(403, '조회할 수 있는 사업소의 데이터만 볼 수 있습니다.')

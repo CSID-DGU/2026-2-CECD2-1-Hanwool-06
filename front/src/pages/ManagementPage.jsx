@@ -75,7 +75,9 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
     return () => { alive = false; };
   }, [isUsers, showDeleted, revision, data]);
   if (!allowed) return <main className="management-page"><h1>접근 권한이 없습니다</h1><p>사용자 관리는 서버 관리자와 총괄 관리자만 사용할 수 있습니다.</p></main>;
-  const meterRecords = showDeleted ? allMeters.filter((m) => m.deleted_at) : (data.meters || []).filter((m) => !m.deleted_at);
+  // 계량기 관리는 담당 사업소만. 인근 사업소 계량기(editable: false)는 전체 현황·역 상세에서 조회만 한다.
+  const ownMeters = (data.meters || []).filter((m) => m.editable !== false);
+  const meterRecords = showDeleted ? allMeters.filter((m) => m.deleted_at) : ownMeters.filter((m) => !m.deleted_at);
   const searched = (isUsers ? users : meterRecords).filter((item) => (
     isUsers ? `${item.name} ${item.email}` : `${item.station_name} ${item.customer_number} ${item.display_name || ""} ${item.office_name || ""}`
   ).toLowerCase().includes(search.trim().toLowerCase()));
@@ -157,7 +159,7 @@ export default function ManagementPage({ data, user, kind, onSaved, collection }
       <button className="primary-button" type="button" onClick={() => { setEditor({}); setMessage(""); }}>{isUsers ? "사용자 추가" : "계량기 추가"}</button></div>
     {error && <p className="form-error" role="alert">{error} <button onClick={() => setRevision((n) => n + 1)}>다시 시도</button></p>}
     {message && <p className="form-message" role="status">{message}</p>}
-    {!isUsers && <CollectionPanel collection={collection} meters={data.meters || []} showSettings />}
+    {!isUsers && <CollectionPanel collection={collection} meters={ownMeters} showSettings />}
     <section className="management-card">
       {!isUsers && <div className="management-tabs" role="group" aria-label="계량기 보관 상태"><button aria-pressed={!showDeleted} onClick={() => setShowDeleted(false)}>등록 계량기</button><button aria-pressed={showDeleted} onClick={() => setShowDeleted(true)}>삭제 보관함</button>{showDeleted && <p>복원하면 다시 관제와 수집 대상이 됩니다.</p>}</div>}
       <div className="table-toolbar">
@@ -268,8 +270,9 @@ function MeterForm({ item, data, onSaved, canPosition, onExisting }) {
   const stationLines = (stationId) => [...new Set((data.meters || []).filter((m) => String(m.station_id) === String(stationId) && m.line).map((m) => String(m.line)))];
   const [isNewStation, setIsNewStation] = useState(!stations.length);
   // 새 계량기는 역·호선·담당 사업소를 비워 두고 고르게 한다(첫 항목을 미리 채우면 바꾸는 것을 잊고 잘못 등록된다).
-  // 고를 수 있는 사업소가 하나뿐이면(사업소 담당자) 그 사업소를 채운다.
-  const [form, setForm] = useState({ provider: "arisu", customer_number: "", station_id: "", station_name: "", line: "", office_id: data.offices?.length === 1 ? data.offices[0].id : "", display_name: "", address: "", purpose: "", tariff: "", active: true, daily_enabled: true, ...item });
+  // 고를 수 있는 사업소가 하나뿐이면(사업소 담당자) 그 사업소를 채운다. 인근 사업소(조회 전용)는 고를 수 없다.
+  const offices = (data.offices || []).filter((o) => o.editable !== false);
+  const [form, setForm] = useState({ provider: "arisu", customer_number: "", station_id: "", station_name: "", line: "", office_id: offices.length === 1 ? offices[0].id : "", display_name: "", address: "", purpose: "", tariff: "", active: true, daily_enabled: true, ...item });
   const [autoLine, setAutoLine] = useState(false);   // 호선을 역에서 채웠는지. 직접 고른 호선은 역을 바꿔도 덮어쓰지 않는다
   const [meterNumber, setMeterNumber] = useState(item.metadata?.계량기번호 || "");
   const [arisuCustomerName, setArisuCustomerName] = useState(item.metadata?.arisu_customer_name || "");
@@ -335,7 +338,7 @@ function MeterForm({ item, data, onSaved, canPosition, onExisting }) {
         className={form.station_id ? "" : "is-empty"} display={form.station_id ? undefined : "역을 선택하세요"} onChange={chooseStation} />}
     <div className="form-grid"><SelectField label="호선" value={String(form.line ?? "")} options={[1,2,3,4,5,6,7,8].map((line) => ({ value: String(line), label: `${line}호선` }))}
         className={form.line ? "" : "is-empty"} display={form.line ? undefined : "호선을 선택하세요"} onChange={(value) => { field("line", value); setAutoLine(false); }} />
-      <SelectField label="담당 사업소" value={String(form.office_id ?? "")} options={(data.offices || []).map((o) => ({ value: String(o.id), label: o.name }))}
+      <SelectField label="담당 사업소" value={String(form.office_id ?? "")} options={offices.map((o) => ({ value: String(o.id), label: o.name }))}
         className={form.office_id ? "" : "is-empty"} display={form.office_id ? undefined : "사업소를 선택하세요"} onChange={(value) => field("office_id", value)} /></div>
     <label className="form-field">계량기 이름 / 설치 위치<input required maxLength={100} value={form.display_name} onChange={(e) => field("display_name", e.target.value)} placeholder="예: 대합실 화장실" /></label>
     <label className="form-field">계량기번호<input value={meterNumber} onChange={(e) => setMeterNumber(e.target.value)} /></label>
